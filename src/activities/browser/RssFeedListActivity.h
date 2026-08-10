@@ -16,7 +16,7 @@
  */
 class RssFeedListActivity final : public Activity {
   enum class View : uint8_t { DASHBOARD, CATEGORIES, SUBSCRIPTIONS };
-  enum class DashboardAction : uint8_t { ALL, UNREAD, STARRED, QUEUED, CATEGORIES, SUBSCRIPTIONS, REFRESH };
+  enum class DashboardAction : uint8_t { REFRESH, ALL, UNREAD, STARRED, QUEUED, CATEGORIES, SUBSCRIPTIONS };
   enum class SyncState : uint8_t { IDLE, CHECK_WIFI, WIFI_SELECTION, LOADING, ERROR };
 
   ButtonNavigator buttonNavigator;

@@ -2417,6 +2417,19 @@ bool GfxRenderer::supportsAsyncRefresh() const { return !fadingFix && display.su
 
 bool GfxRenderer::supportsAsyncGrayscaleBase() const { return !fadingFix && display.supportsAsyncGrayscaleBase(); }
 
+static uint32_t lastUtf8Codepoint(const std::string& text) {
+  if (text.empty()) return 0;
+  const unsigned char* cursor = reinterpret_cast<const unsigned char*>(text.data());
+  const unsigned char* end = cursor + text.size();
+  const unsigned char* lastStart = cursor;
+  while (cursor < end) {
+    lastStart = cursor;
+    utf8NextCodepoint(&cursor);
+  }
+  cursor = lastStart;
+  return utf8NextCodepoint(&cursor);
+}
+
 std::string GfxRenderer::truncatedText(const int fontId, const char* text, const int maxWidth,
                                        const EpdFontFamily::Style style) const {
   if (!text || maxWidth <= 0) return "";
@@ -2431,6 +2444,12 @@ std::string GfxRenderer::truncatedText(const int fontId, const char* text, const
   }
 
   while (!item.empty() && getTextWidth(fontId, (item + ellipsis).c_str(), style) >= maxWidth) {
+    utf8RemoveLastChar(item);
+  }
+
+  while (!item.empty()) {
+    const uint32_t lastCp = lastUtf8Codepoint(item);
+    if (!utf8IsGujaratiOverlayMark(lastCp) && !BidiUtils::isTransparentMark(lastCp)) break;
     utf8RemoveLastChar(item);
   }
 

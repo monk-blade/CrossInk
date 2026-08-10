@@ -1,12 +1,15 @@
 #include "EpubReaderChapterSelectionActivity.h"
 
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
+#include <GujaratiIntegration.h>
 #include <I18n.h>
 
 #include "MappedInputManager.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
+#include "components/UIScale.h"
 #include "components/UiAppHelpers.h"
 
 namespace fui = freeink::ui;
@@ -145,6 +148,7 @@ void EpubReaderChapterSelectionActivity::buildChapterScreen(UiApp::ScreenType& s
   for (int i = 0; i < totalItems; ++i) {
     const auto item = epub->getTocItem(i);
     labels[i] = std::string((item.level - 1) * 2, ' ') + item.title;
+    GujaratiIntegration::shapeLongUiString(labels[i]);
     fui::ListItem row;
     row.label = labels[i].c_str();
     row.actionValue = static_cast<int16_t>(i);
@@ -179,6 +183,22 @@ void EpubReaderChapterSelectionActivity::render(RenderLock&&) {
     GUI.drawHeader(renderer, header, tr(STR_SELECT_CHAPTER), nullptr, true);
   }
   uiReady = false;
+  if (epub) {
+    const int fontId = uiScaleSpec().bodyFontId;
+    std::string prewarmText;
+    for (int i = 0; i < epub->getTocItemsCount(); ++i) {
+      const auto item = epub->getTocItem(i);
+      std::string label = std::string((item.level - 1) * 2, ' ') + item.title;
+      GujaratiIntegration::shapeLongUiString(label);
+      prewarmText += label;
+      prewarmText += '\n';
+    }
+    if (auto* fcm = renderer.getFontCacheManager(); fcm && !prewarmText.empty()) {
+      auto scope = fcm->createPrewarmScope();
+      renderer.drawText(fontId, 0, 0, prewarmText.c_str(), true);
+      scope.endScanAndPrewarm();
+    }
+  }
   app.render();
   uiReady = true;
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));

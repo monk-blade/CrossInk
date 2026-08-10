@@ -1,6 +1,7 @@
 #include "RssFeedListActivity.h"
 
 #include <Arduino.h>
+#include <FontCacheManager.h>
 #include <GujaratiIntegration.h>
 #include <I18n.h>
 #include <WiFi.h>
@@ -83,6 +84,12 @@ void RssFeedListActivity::loadDashboard() {
     if (RSS_ITEM_STATE.isStarred("freshrss", key)) ++starred;
     if (RSS_ITEM_STATE.isQueued("freshrss", key)) ++queued;
   }
+  RssFeed refreshEntry;
+  refreshEntry.name = refreshMenuLabel.empty() ? tr(STR_REFRESH) : refreshMenuLabel;
+  refreshEntry.url = "freshrss";
+  refreshEntry.isFreshRss = true;
+  entries.push_back(std::move(refreshEntry));
+
   entries.push_back(makeFreshFeed(all));
   RssFeed unreadFeed = makeFreshFeed(unread);
   unreadFeed.freshLocalFilter = RssLocalFilter::Unread;
@@ -121,12 +128,6 @@ void RssFeedListActivity::loadDashboard() {
   subscriptions.isFreshRss = true;
   subscriptions.articleCount = subscriptionCount;
   entries.push_back(std::move(subscriptions));
-
-  RssFeed refreshEntry;
-  refreshEntry.name = refreshMenuLabel.empty() ? tr(STR_REFRESH) : refreshMenuLabel;
-  refreshEntry.url = "freshrss";
-  refreshEntry.isFreshRss = true;
-  entries.push_back(std::move(refreshEntry));
 
   for (auto& entry : entries) GujaratiIntegration::shapeLongUiString(entry.name);
   selectorIndex = std::clamp(selectorIndex, 0, std::max(0, static_cast<int>(entries.size()) - 1));
@@ -453,6 +454,19 @@ void RssFeedListActivity::render(RenderLock&&) {
                                                         : "No cached articles. Select Refresh to sync.";
     renderer.drawCenteredText(UI_10_FONT_ID, contentTop + contentHeight / 2, message);
   } else {
+    if (view == View::DASHBOARD && !entries.empty()) {
+      auto* fcm = renderer.getFontCacheManager();
+      if (fcm) {
+        std::string names;
+        for (const auto& entry : entries) {
+          names += entry.name;
+          names += '\n';
+        }
+        auto scope = fcm->createPrewarmScope();
+        renderer.drawText(UI_10_FONT_ID, 0, 0, names.c_str(), true, EpdFontFamily::REGULAR);
+        scope.endScanAndPrewarm();
+      }
+    }
     GUI.drawList(
         renderer, Rect{screen.x, contentTop, screen.width, contentHeight}, totalItems, selectorIndex,
         [this](const int index) {
@@ -462,19 +476,19 @@ void RssFeedListActivity::render(RenderLock&&) {
           if (view != View::DASHBOARD) return UIIcon::Folder;
           switch (index) {
             case 0:
-              return UIIcon::List;
-            case 1:
-              return UIIcon::Mail;
-            case 2:
-              return UIIcon::Star;
-            case 3:
-              return UIIcon::BookmarkMenu;
-            case 4:
-              return UIIcon::Folder;
-            case 5:
-              return UIIcon::Rss;
-            case 6:
               return UIIcon::Transfer;
+            case 1:
+              return UIIcon::List;
+            case 2:
+              return UIIcon::Mail;
+            case 3:
+              return UIIcon::Star;
+            case 4:
+              return UIIcon::BookmarkMenu;
+            case 5:
+              return UIIcon::Folder;
+            case 6:
+              return UIIcon::Rss;
             default:
               return UIIcon::None;
           }

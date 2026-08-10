@@ -85,6 +85,8 @@ const freeink::Icon* LyraTheme::iconForName(UIIcon icon, uint32_t size) {
         return &icon_bookmark_24;
       case UIIcon::Rss:
         return &icon_rss_24;
+      case UIIcon::Transfer:
+        return &icon_transfer_24;
       default:
         return nullptr;
     }
@@ -571,6 +573,7 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
         for (const auto& line : titleLines) {
           renderer.drawText(UI_12_FONT_ID, 0, 0, line.c_str(), true, EpdFontFamily::BOLD);
         }
+        renderer.drawText(UI_12_FONT_ID, 0, 0, "\xe2\x80\xa6", true, EpdFontFamily::BOLD);
         if (!book.author.empty()) {
           renderer.drawText(UI_10_FONT_ID, 0, 0, book.author.c_str(), true, EpdFontFamily::REGULAR);
         }

@@ -648,8 +648,26 @@ void RssItemListActivity::render(RenderLock&&) {
     if (!visibleTitles.empty()) {
       auto* fcm = renderer.getFontCacheManager();
       if (fcm) {
+        constexpr int hPaddingInSelection = 8;
+        constexpr int listIconSize = 24;
+        constexpr int maxListValueWidth = 240;
+        int rowTextWidth = screen.width - metrics.contentSidePadding * 2 - hPaddingInSelection * 2 - listIconSize -
+                           hPaddingInSelection;
+        if (showDates) rowTextWidth -= maxListValueWidth;
+        rowTextWidth = std::max(0, rowTextWidth);
+        std::string truncatedTitles;
+        for (int i = pageStartIndex; i < pageEndIndex; ++i) {
+          const auto* item = itemAtVisibleIndex(static_cast<size_t>(i));
+          if (!item) continue;
+          truncatedTitles += renderer.truncatedText(UI_10_FONT_ID, item->title.c_str(), rowTextWidth);
+          truncatedTitles += '\n';
+        }
         auto scope = fcm->createPrewarmScope();
         renderer.drawText(UI_10_FONT_ID, 0, 0, visibleTitles.c_str(), true, EpdFontFamily::REGULAR);
+        if (!truncatedTitles.empty()) {
+          renderer.drawText(UI_10_FONT_ID, 0, 0, truncatedTitles.c_str(), true, EpdFontFamily::REGULAR);
+        }
+        renderer.drawText(UI_10_FONT_ID, 0, 0, "\xe2\x80\xa6", true, EpdFontFamily::REGULAR);
         if (showSubtitle) {
           renderer.drawText(SMALL_FONT_ID, 0, 0, visibleTitles.c_str(), true, EpdFontFamily::REGULAR);
         }

@@ -1,12 +1,15 @@
 #include "XtcReaderChapterSelectionActivity.h"
 
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
+#include <GujaratiIntegration.h>
 #include <I18n.h>
 
 #include "MappedInputManager.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
+#include "components/UIScale.h"
 #include "components/UiAppHelpers.h"
 
 namespace fui = freeink::ui;
@@ -139,11 +142,14 @@ void XtcReaderChapterSelectionActivity::buildChapterScreen(UiApp::ScreenType& sc
     screen.centeredText(tr(STR_NO_CHAPTERS), screen.theme().bodyText);
     return;
   }
+  std::vector<std::string> labels(chapters.size());
   std::vector<fui::ListItem> items;
   items.reserve(chapters.size());
   for (size_t i = 0; i < chapters.size(); ++i) {
+    labels[i] = chapters[i].name[0] == '\0' ? tr(STR_UNNAMED) : chapters[i].name;
+    GujaratiIntegration::shapeLongUiString(labels[i]);
     fui::ListItem row;
-    row.label = chapters[i].name[0] == '\0' ? tr(STR_UNNAMED) : chapters[i].name;
+    row.label = labels[i].c_str();
     row.actionValue = static_cast<int16_t>(i);
     items.push_back(row);
   }
@@ -176,6 +182,21 @@ void XtcReaderChapterSelectionActivity::render(RenderLock&&) {
     GUI.drawHeader(renderer, header, tr(STR_SELECT_CHAPTER), nullptr, true);
   }
   uiReady = false;
+  if (xtc) {
+    const int fontId = uiScaleSpec().bodyFontId;
+    std::string prewarmText;
+    for (const auto& chapter : xtc->getChapters()) {
+      std::string label = chapter.name[0] == '\0' ? tr(STR_UNNAMED) : chapter.name;
+      GujaratiIntegration::shapeLongUiString(label);
+      prewarmText += label;
+      prewarmText += '\n';
+    }
+    if (auto* fcm = renderer.getFontCacheManager(); fcm && !prewarmText.empty()) {
+      auto scope = fcm->createPrewarmScope();
+      renderer.drawText(fontId, 0, 0, prewarmText.c_str(), true);
+      scope.endScanAndPrewarm();
+    }
+  }
   app.render();
   uiReady = true;
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
