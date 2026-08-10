@@ -2,6 +2,8 @@
 
 #include "Utf8ComposeTable.h"
 
+#include <string>
+
 namespace {
 // Look up the canonical composition of (base + combining mark), or 0 if none.
 uint32_t utf8ComposePair(const uint32_t base, const uint32_t mark) {
@@ -214,6 +216,22 @@ void utf8AppendCodepoint(uint32_t cp, std::string& out) {
     out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
     out += static_cast<char>(0x80 | (cp & 0x3F));
   }
+}
+
+void utf8SanitizeInPlace(std::string& text) {
+  std::string sanitized;
+  sanitized.reserve(text.size());
+  const auto* cursor = reinterpret_cast<const unsigned char*>(text.c_str());
+  while (*cursor != 0) {
+    const auto* before = cursor;
+    const uint32_t codepoint = utf8NextCodepoint(&cursor);
+    if (cursor == before) {
+      ++cursor;
+    } else if (codepoint != 0 && codepoint != REPLACEMENT_GLYPH) {
+      utf8AppendCodepoint(codepoint, sanitized);
+    }
+  }
+  text.swap(sanitized);
 }
 
 int utf8SafeTruncateBuffer(const char* buf, int len) {

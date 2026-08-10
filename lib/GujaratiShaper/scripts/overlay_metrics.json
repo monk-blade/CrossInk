@@ -1,0 +1,36 @@
+{
+  "families": {
+    "AnekGujarati": {
+      "subjoinedRaOffsetDen": 482,
+      "subjoinedRaOffsetNum": 201
+    },
+    "BalooBhai2": {
+      "subjoinedRaOffsetDen": 482,
+      "subjoinedRaOffsetNum": 201
+    },
+    "GoogleSans": {
+      "subjoinedRaOffsetDen": 482,
+      "subjoinedRaOffsetNum": 201
+    },
+    "HindVadodara": {
+      "subjoinedRaOffsetDen": 482,
+      "subjoinedRaOffsetNum": 201
+    },
+    "MuktaVaani": {
+      "subjoinedRaOffsetDen": 482,
+      "subjoinedRaOffsetNum": 201
+    },
+    "NotoSansGujarati": {
+      "subjoinedRaOffsetDen": 482,
+      "subjoinedRaOffsetNum": 201
+    },
+    "NotoSerifGujarati": {
+      "subjoinedRaOffsetDen": 482,
+      "subjoinedRaOffsetNum": 201
+    },
+    "Rasa": {
+      "subjoinedRaOffsetDen": 482,
+      "subjoinedRaOffsetNum": 201
+    }
+  }
+}

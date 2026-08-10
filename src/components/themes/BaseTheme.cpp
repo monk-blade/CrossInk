@@ -2,6 +2,7 @@
 
 #include <FreeInkUIGfxRenderer.h>
 #include <GfxRenderer.h>
+#include <GujaratiIntegration.h>
 #include <HalClock.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
@@ -977,6 +978,12 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
 
   // Draw Title
   if (!title.empty()) {
+    // Chapter/book titles reach the status bar straight from EPUB/XTC TOC
+    // metadata, bypassing ParsedText's parse-time shaping. Shape here before
+    // measuring so width/truncation account for the shaped (possibly
+    // shorter, ligated) glyph run rather than the raw codepoint sequence.
+    // No-op for already-shaped or non-Gujarati titles.
+    GujaratiIntegration::shapeUiString(title);
     textY -= textYOffset;
     // Centered chapter title text
     // Page width minus existing content with 30px padding on each side

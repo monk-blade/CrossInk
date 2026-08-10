@@ -43,6 +43,8 @@ enum class SettingAction {
   Language,
   DownloadFonts,
   ClockSync,
+  RssSettings,
+  FreshRssSettings,
 };
 
 struct SettingInfo {

@@ -100,13 +100,21 @@ bool SdCardFontManager::loadFamilyFile(const char* path, const char* familyName,
 
 int SdCardFontManager::loadFamilyExtraSize(const SdCardFontFamilyInfo& family, GfxRenderer& renderer,
                                            uint8_t pointSize) {
-  const SdCardFontFileInfo* file = family.findFile(pointSize);
-  if (!file) return 0;  // family has no .cpfont at this exact size
+  // Families built for reading sizes only (e.g. Rasa, IBMPlexSansCondensed
+  // ship 12/14/16/18pt) commonly have no file at the small UI chrome sizes
+  // (8/10/12pt). Fall back to the closest installed size instead of giving
+  // up, same as loadFamilyClosest() does for the primary reader font --
+  // otherwise UI text at those sizes (status bar, list rows) silently never
+  // gets a fallback registered and any script the built-in UI fonts lack
+  // (Gujarati, CJK) renders as tofu even though the family covers it.
+  const SdCardFontFileInfo* file = family.findClosestFile(pointSize);
+  if (!file) return 0;  // family has no installed .cpfont files at all
 
-  // Reuse an already-loaded font of the same size (e.g. when a reader size
-  // happens to match a UI size) instead of double-loading the file.
+  // Reuse an already-loaded font of the same resolved size (e.g. two UI
+  // sizes both fall back to the same closest file, or a reader size happens
+  // to match a UI size) instead of double-loading the file.
   for (const auto& lf : loaded_) {
-    if (lf.size == pointSize) return lf.fontId;
+    if (lf.size == file->pointSize) return lf.fontId;
   }
 
   return loadFile(*file, family.name.c_str(), renderer);

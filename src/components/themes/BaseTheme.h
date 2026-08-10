@@ -124,6 +124,7 @@ struct ThemeMetrics {
 };
 
 enum UIIcon {
+  None,
   Folder,
   Text,
   Image,
@@ -136,7 +137,14 @@ enum UIIcon {
   Library,
   Wifi,
   Hotspot,
-  Chart
+  Chart,
+  List,
+  Mail,
+  Star,
+  BookmarkMenu,
+  Rss,
+  ReadDot,
+  UnreadDot
 };
 
 // Default theme implementation (Classic Theme)

@@ -6,6 +6,7 @@
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <GujaratiIntegration.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
@@ -6187,6 +6188,16 @@ void EpubReaderActivity::renderStatusBar() const {
   char timeLeftLabel[24] = {};
   const char* timeLeft =
       (!activeFootnotePreview && formatTimeLeftLabel(timeLeftLabel, sizeof(timeLeftLabel))) ? timeLeftLabel : nullptr;
+  if (!title.empty()) {
+    auto* fcm = renderer.getFontCacheManager();
+    if (fcm) {
+      std::string shapedTitle = title;
+      GujaratiIntegration::shapeUiString(shapedTitle);
+      auto scope = fcm->createPrewarmScope();
+      renderer.drawText(SMALL_FONT_ID, 0, 0, shapedTitle.c_str(), true, EpdFontFamily::REGULAR);
+      scope.endScanAndPrewarm();
+    }
+  }
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, bookmarked, timeLeft,
                     ReaderUtils::readerDarkModeEnabled(), chapterProgress * 100.0f, static_cast<int>(referencePage),
                     static_cast<int>(referencePageCount), !activeFootnotePreview, pageCountEstimated);

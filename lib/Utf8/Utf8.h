@@ -7,6 +7,9 @@
 uint32_t utf8NextCodepoint(const unsigned char** string);
 // Appends a Unicode codepoint to a std::string in UTF-8 encoding.
 void utf8AppendCodepoint(uint32_t cp, std::string& out);
+// Remove malformed UTF-8 bytes and replacement characters in place. This is
+// used for bounded text received from external sources such as RSS feeds.
+void utf8SanitizeInPlace(std::string& text);
 // Remove the last UTF-8 codepoint from a std::string and return the new size.
 size_t utf8RemoveLastChar(std::string& str);
 // Truncate string by removing N UTF-8 codepoints from the end.

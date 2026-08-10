@@ -1,6 +1,7 @@
 #include "LyraTheme.h"
 
 #include <GfxRenderer.h>
+#include <FontCacheManager.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
@@ -20,6 +21,7 @@
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "components/icons/chart.h"
+#include "components/icons/tabler_rss24.h"
 #include "fontIds.h"
 
 // Internal constants
@@ -51,6 +53,8 @@ int mainMenuIconYOffset(const UIIcon icon) {
       return -2;
     case UIIcon::Library:
       return -4;
+    case UIIcon::Rss:
+      return -4;
     default:
       return 0;
   }
@@ -71,6 +75,16 @@ const freeink::Icon* LyraTheme::iconForName(UIIcon icon, uint32_t size) {
         return &icon_book_marked_24;
       case UIIcon::File:
         return &icon_file_24;
+      case UIIcon::List:
+        return &icon_list_24;
+      case UIIcon::Mail:
+        return &icon_mail_24;
+      case UIIcon::Star:
+        return &icon_star_24;
+      case UIIcon::BookmarkMenu:
+        return &icon_bookmark_24;
+      case UIIcon::Rss:
+        return &icon_rss_24;
       default:
         return nullptr;
     }
@@ -92,6 +106,8 @@ const freeink::Icon* LyraTheme::iconForName(UIIcon icon, uint32_t size) {
         return &icon_wifi_32;
       case UIIcon::Hotspot:
         return &icon_radio_tower_32;
+      case UIIcon::Rss:
+        return &icon_rss_32;
       default:
         return nullptr;
     }
@@ -547,6 +563,20 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
     }
 
     auto titleLines = renderer.wrappedText(UI_12_FONT_ID, book.title.c_str(), textWidth, 3, EpdFontFamily::BOLD);
+
+    if (!book.title.empty()) {
+      auto* fcm = renderer.getFontCacheManager();
+      if (fcm) {
+        auto scope = fcm->createPrewarmScope();
+        for (const auto& line : titleLines) {
+          renderer.drawText(UI_12_FONT_ID, 0, 0, line.c_str(), true, EpdFontFamily::BOLD);
+        }
+        if (!book.author.empty()) {
+          renderer.drawText(UI_10_FONT_ID, 0, 0, book.author.c_str(), true, EpdFontFamily::REGULAR);
+        }
+        scope.endScanAndPrewarm();
+      }
+    }
 
     auto author = renderer.truncatedText(UI_10_FONT_ID, book.author.c_str(), textWidth);
     const int titleLineHeight = renderer.getLineHeight(UI_12_FONT_ID);

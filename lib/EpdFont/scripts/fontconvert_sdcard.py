@@ -30,6 +30,7 @@ import os
 import re
 import math
 import argparse
+import json
 from collections import namedtuple
 
 from cpfont_version import CPFONT_VERSION
@@ -45,6 +46,7 @@ INTERVAL_PRESETS = {
     "greek":       [(0x0370, 0x03FF), (0x1F00, 0x1FFF)],
     "cyrillic":    [(0x0400, 0x04FF), (0x0500, 0x052F)],
     "hebrew":      [(0x0590, 0x05FF), (0xFB1D, 0xFB4F)],
+    "gujarati":    [(0x0A80, 0x0AFF), (0xA830, 0xA83F)],
     "georgian":    [(0x10A0, 0x10FF), (0x2D00, 0x2D2F)],
     "armenian":    [(0x0530, 0x058F)],
     "ethiopic":    [(0x1200, 0x137F), (0x1380, 0x139F), (0x2D80, 0x2DDF)],
@@ -608,9 +610,70 @@ def parse_fallback_range_spec(spec):
     return ranges
 
 
+def resolve_pua_glyph_indices(font_path, pua_mapping):
+    """Resolve shaped Gujarati PUA codes to glyph indices for one font.
+
+    GujaratiShaper stores conjuncts as PUA codepoints, while the target font
+    usually keeps the corresponding glyphs unencoded in its cmap.  FontTools
+    gives us the font-internal glyph order so FreeType can rasterize those
+    glyphs by index.  The result is intentionally per-font: an RSS list font
+    and its Gujarati fallback may use different glyph names for the same
+    canonical PUA code.
+    """
+    if not pua_mapping:
+        return {}
+
+    mappings = pua_mapping if isinstance(pua_mapping, (list, tuple)) else [pua_mapping]
+
+    from fontTools.ttLib import TTFont
+
+    font = TTFont(font_path)
+    try:
+        glyph_order = font.getGlyphOrder()
+        name_to_index = {name: index for index, name in enumerate(glyph_order)}
+    finally:
+        font.close()
+
+    resolved = {}
+    for mapping in mappings:
+        for code_point, glyph_name in mapping.items():
+            code_point = int(code_point, 16) if isinstance(code_point, str) else int(code_point)
+            if code_point in resolved:
+                continue
+            glyph_index = name_to_index.get(glyph_name, 0)
+            if glyph_index > 0:
+                resolved[code_point] = glyph_index
+    return resolved
+
+
+def load_canonical_pua_mapping():
+    """Load the bundled Noto-compatible mapping for fallback faces if present."""
+    path = os.path.normpath(os.path.join(
+        os.path.dirname(__file__), "..", "..", "GujaratiShaper", "scripts",
+        "pua_mapping.json"
+    ))
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as mapping_file:
+        return json.load(mapping_file)
+
+
+def merge_intervals(intervals):
+    """Return sorted, non-overlapping inclusive intervals."""
+    merged = []
+    for start, end in sorted(intervals):
+        if start > end:
+            continue
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=False,
                          fallback_fontfiles=None, fallback_include_intervals=None,
-                         fallback_fontfile=None, darken_aa=False):
+                         fallback_fontfile=None, darken_aa=False, pua_mapping=None):
     """Rasterize all glyphs for one font style. Returns StyleRasterData."""
     import freetype
 
@@ -628,6 +691,7 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=F
     # Invalid_Size_Handle on some fonts.
     face.set_char_size(size << 6, size << 6, 150, 150)
     ligature_glyph_indices = extract_ligature_glyph_indices_fonttools(fontfile)
+    pua_glyph_indices = resolve_pua_glyph_indices(fontfile, pua_mapping)
     # ``fallback_fontfile`` is retained as a compatibility alias for callers
     # that used the original single-fallback API. New callers should pass an
     # ordered list through ``fallback_fontfiles``.
@@ -641,10 +705,37 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=F
         raise ValueError("fallback font and fallback range counts must match")
 
     fallback_faces = []
+    fallback_pua_glyph_indices = []
+    canonical_pua_mapping = load_canonical_pua_mapping() if pua_mapping else None
     for fallback_path in fallback_fontfiles:
         fallback_face = freetype.Face(fallback_path)
         fallback_face.set_char_size(size << 6, size << 6, 150, 150)
         fallback_faces.append(fallback_face)
+        fallback_mappings = []
+        if canonical_pua_mapping:
+            fallback_mappings.append(canonical_pua_mapping)
+        if pua_mapping:
+            fallback_mappings.append(pua_mapping)
+        fallback_pua_glyph_indices.append(resolve_pua_glyph_indices(fallback_path, fallback_mappings))
+
+    # PUA entries are not part of a font cmap, so add only the exact mapped
+    # codepoints that at least one face can rasterize.  Keeping these as small
+    # sorted intervals avoids scanning the entire BMP PUA block for every
+    # generated style.
+    pua_codepoints = sorted(set(pua_glyph_indices).union(
+        *(set(indices) for indices in fallback_pua_glyph_indices)
+    )) if pua_mapping else []
+    if pua_codepoints:
+        pua_intervals = []
+        start = previous = pua_codepoints[0]
+        for code_point in pua_codepoints[1:]:
+            if code_point != previous + 1:
+                pua_intervals.append((start, previous))
+                start = code_point
+            previous = code_point
+        pua_intervals.append((start, previous))
+        intervals = merge_intervals(list(intervals) + pua_intervals)
+        print(f"  [{style_label}] PUA mapping: {len(pua_codepoints)} glyphs resolved", file=sys.stderr)
 
     load_flags = freetype.FT_LOAD_RENDER
     if force_autohint:
@@ -653,15 +744,17 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=F
     def load_glyph(code_point):
         glyph_index = face.get_char_index(code_point)
         if glyph_index == 0:
-            glyph_index = ligature_glyph_indices.get(code_point, 0)
+            glyph_index = pua_glyph_indices.get(code_point, 0) or ligature_glyph_indices.get(code_point, 0)
         if glyph_index > 0:
             face.load_glyph(glyph_index, load_flags)
             return face
-        for fallback_face, allowed_intervals in zip(
-                fallback_faces, fallback_include_intervals):
+        for fallback_face, allowed_intervals, pua_indices in zip(
+                fallback_faces, fallback_include_intervals, fallback_pua_glyph_indices):
             if allowed_intervals and not code_point_in_intervals(code_point, allowed_intervals):
                 continue
             fallback_glyph_index = fallback_face.get_char_index(code_point)
+            if fallback_glyph_index == 0:
+                fallback_glyph_index = pua_indices.get(code_point, 0)
             if fallback_glyph_index > 0:
                 fallback_face.load_glyph(fallback_glyph_index, load_flags)
                 return fallback_face
@@ -676,12 +769,15 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=F
     for i_start, i_end in intervals:
         start = i_start
         for code_point in range(i_start, i_end + 1):
-            has_primary = face.get_char_index(code_point) != 0 or code_point in ligature_glyph_indices
+            has_primary = (face.get_char_index(code_point) != 0 or
+                           code_point in ligature_glyph_indices or
+                           code_point in pua_glyph_indices)
             has_fallback = any(
                 (not allowed_intervals or code_point_in_intervals(code_point, allowed_intervals))
-                and fallback_face.get_char_index(code_point) != 0
-                for fallback_face, allowed_intervals in zip(
-                    fallback_faces, fallback_include_intervals
+                and (fallback_face.get_char_index(code_point) != 0 or
+                     code_point in pua_indices)
+                for fallback_face, allowed_intervals, pua_indices in zip(
+                    fallback_faces, fallback_include_intervals, fallback_pua_glyph_indices
                 )
             )
             has_synthetic_blank = is_synthetic_blank_codepoint(code_point)
@@ -692,7 +788,14 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=F
         if start <= i_end:
             validated_intervals.append((start, i_end))
 
-    intervals = validated_intervals
+    # The firmware uses binary search over this table.  Keep the table sorted
+    # after injecting PUA intervals and reject accidental overlaps early.
+    intervals = merge_intervals(validated_intervals)
+    for previous, current in zip(intervals, intervals[1:]):
+        if current[0] <= previous[1]:
+            raise ValueError(
+                f"overlapping intervals after validation: {previous} vs {current}"
+            )
     total_glyphs = sum(end - start + 1 for start, end in intervals)
     print(f"  [{style_label}] Validated: {len(intervals)} intervals, {total_glyphs} glyphs", file=sys.stderr)
 
@@ -904,12 +1007,14 @@ def style_sections_total_size(sections):
 
 def generate_cpfont_multistyle(style_fonts, size, intervals, output_path,
                                force_autohint=False, fallback_style_fonts=None,
-                               fallback_style_intervals=None, darken_aa=False):
+                               fallback_style_intervals=None, darken_aa=False,
+                               pua_mapping=None):
     """Generate a multi-style v4 .cpfont file.
 
     style_fonts: dict of {style_id: fontfile_path} e.g. {0: "Regular.ttf", 2: "Italic.ttf"}
     fallback_style_fonts: optional dict of {style_id: [fallback_fontfile_path]}
     fallback_style_intervals: optional dict of {style_id: [allowed ranges]}
+    pua_mapping: optional mapping of PUA codepoints to font glyph names
     """
     MAGIC = b"CPFONT\x00\x00"
     HEADER_SIZE = 32
@@ -931,7 +1036,8 @@ def generate_cpfont_multistyle(style_fonts, size, intervals, output_path,
             force_autohint=force_autohint,
             fallback_fontfiles=fallback_fontfiles,
             fallback_include_intervals=fallback_include_intervals,
-            darken_aa=darken_aa)
+            darken_aa=darken_aa,
+            pua_mapping=pua_mapping)
 
     # Pack binary sections for each style
     packed_sections = {}  # style_id -> tuple of section bytearrays
@@ -1028,6 +1134,8 @@ def main():
                         help="Force FreeType auto-hinter instead of native font hinting.")
     parser.add_argument("--darken-aa", dest="darken_aa", action="store_true",
                         help="Use darker 2-bit anti-aliasing thresholds, matching the built-in reader fonts.")
+    parser.add_argument("--pua-mapping", dest="pua_mapping",
+                        help="JSON mapping of shaped PUA codepoints to font glyph names.")
     parser.add_argument("-o", "--output", dest="output",
                         help="Output file path (for single-size mode).")
     parser.add_argument("--output-dir", dest="output_dir",
@@ -1118,6 +1226,11 @@ def main():
 
     intervals = resolve_intervals(args.intervals)
 
+    pua_mapping = None
+    if args.pua_mapping:
+        with open(args.pua_mapping, encoding="utf-8") as mapping_file:
+            pua_mapping = json.load(mapping_file)
+
     # Determine sizes
     if args.sizes:
         sizes = [int(s.strip()) for s in args.sizes.split(",")]
@@ -1177,7 +1290,8 @@ def main():
             force_autohint=args.force_autohint,
             fallback_style_fonts=fallback_style_fonts,
             fallback_style_intervals=fallback_style_intervals,
-            darken_aa=args.darken_aa)
+            darken_aa=args.darken_aa,
+            pua_mapping=pua_mapping)
     print(f"\nTotal: {len(sizes)} files, {total_size / 1024 / 1024:.2f} MB", file=sys.stderr)
 
 

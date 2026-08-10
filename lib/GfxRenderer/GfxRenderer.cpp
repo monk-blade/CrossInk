@@ -3,6 +3,8 @@
 #include <BidiUtils.h>
 #include <BuildScratch.h>
 #include <FontDecompressor.h>
+#include <GujaratiGlyphs.h>
+#include <GujaratiOverlayDraw.h>
 #include <HalGPIO.h>
 #include <Logging.h>
 #include <SdCardFont.h>
@@ -352,11 +354,10 @@ int GfxRenderer::resolveTextFontId(const int fontId, const char* text, const Epd
   const char* cursor = text;
   uint32_t cp;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&cursor)))) {
-    // Only redirect for CJK the primary font cannot draw but the fallback can.
-    // Latin/symbol strings the built-in UI fonts already cover are left
-    // untouched, and a partial-coverage fallback (e.g. kana-only) is not worth
-    // dragging the whole string into for glyphs it would also miss.
-    if (utf8IsCjkCodepoint(cp) && !primary.hasCodepoint(cp, style) && fallback.hasCodepoint(cp, style)) {
+    // Redirect missing Gujarati as well as CJK to the size-matched SD family.
+    // The whole string remains on one font so measurement and drawing agree.
+    const bool isGujarati = (cp >= 0x0A80 && cp <= 0x0AFF) || (cp >= 0xE000 && cp <= 0xE07C);
+    if ((utf8IsCjkCodepoint(cp) || isGujarati) && !primary.hasCodepoint(cp, style) && fallback.hasCodepoint(cp, style)) {
       return fallbackFontId;
     }
   }
@@ -1057,6 +1058,7 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
     }
     const auto& font = fontIt->second;
     while (uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&textCursor))) {
+      if (utf8IsGujaratiOverlayMark(cp)) continue;
       widthFP += resolveSdCardAdvanceFP(*sdIt->second, font, cp, style, styleIdx);
     }
     return fp4::toPixel(widthFP);
@@ -1092,6 +1094,10 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
   int lastBaseLeft = 0;
   int lastBaseWidth = 0;
   int lastBaseTop = 0;
+  GujaratiOverlayState gujaratiOverlay{};
+  gujaratiOverlay.lastBaseX = x;
+  gujaratiOverlay.lastConsX = x;
+  gujaratiOverlay.lastSyllableX = x;
   int32_t prevAdvanceFP = 0;  // 12.4 fixed-point: prev glyph's advance + next kern for snap
 
   if (fontCacheManager_ && fontCacheManager_->isScanning()) {
@@ -1118,6 +1124,30 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
   uint32_t prevCp = 0;
   bool prevScaledSmallCap = false;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&textCursor)))) {
+    if (utf8IsGujaratiReph(cp)) {
+      const EpdGlyph* glyph = font.getGlyph(cp, style);
+      if (glyph) {
+        const int overlayX = gujaratiRephX(gujaratiOverlay.lastSyllableX, fp4::toPixel(prevAdvanceFP));
+        renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, overlayX, yPos, black, style);
+      }
+      continue;
+    }
+    if (utf8IsGujaratiSubjoinedRa(cp)) {
+      const EpdGlyph* glyph = font.getGlyph(cp, style);
+      if (glyph) {
+        const int overlayX = gujaratiSubjoinedRaX(gujaratiOverlay.lastConsX, fp4::toPixel(gujaratiOverlay.lastConsAdvanceFP));
+        renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, overlayX, yPos, black, style);
+      }
+      continue;
+    }
+    if (utf8IsGujaratiSyllableMark(cp)) {
+      const EpdGlyph* glyph = font.getGlyph(cp, style);
+      if (glyph) {
+        const int overlayX = gujaratiSyllableMarkX(gujaratiOverlay.lastBaseX, fp4::toPixel(prevAdvanceFP));
+        renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, overlayX, yPos, black, style);
+      }
+      continue;
+    }
     if (utf8IsCombiningMark(cp) || BidiUtils::isTransparentMark(cp)) {
       const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
       if (!combiningGlyph) continue;
@@ -1230,6 +1260,9 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     } else {
       renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, lastBaseX, yPos, black, style);
     }
+    gujaratiOverlay.lastBaseX = lastBaseX;
+    gujaratiOverlay.prevAdvanceFP = prevAdvanceFP;
+    gujaratiOverlayUpdateAfterBaseGlyph(gujaratiOverlay, cp, lastBaseX, prevAdvanceFP);
     prevCp = cp;
     prevScaledSmallCap = scaledSmallCap;
   }
@@ -2696,7 +2729,7 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
     uint32_t lastCp = 0;
     bool lastScaledSmallCap = false;
     while (uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text))) {
-      if (BidiUtils::isTransparentMark(cp)) {
+      if (BidiUtils::isTransparentMark(cp) || utf8IsGujaratiOverlayMark(cp)) {
         continue;
       }
       const bool scaledSmallCap = isSmallCapsLowercase(style, cp);
@@ -2743,7 +2776,7 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
   const auto& font = fontIt->second;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text)))) {
     // RTL vowel marks (niqqud/harakat) are zero-advance overlays in drawText — no width.
-    if (BidiUtils::isTransparentMark(cp)) {
+    if (BidiUtils::isTransparentMark(cp) || utf8IsGujaratiOverlayMark(cp)) {
       continue;
     }
     if (utf8IsCombiningMark(cp)) {

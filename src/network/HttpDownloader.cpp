@@ -13,9 +13,11 @@
 #include <strings.h>
 
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "AppVersion.h"
 #include "network/WifiPowerSaveGuard.h"
@@ -167,6 +169,125 @@ struct Sink {
   size_t total = 0;
   bool rangeIgnored = false;
 };
+
+using Header = HttpDownloader::Header;
+
+// FreshRSS needs a small generic request surface in addition to the existing
+// resumable GET downloader: ClientLogin is form POST and API reads carry a
+// GoogleLogin Authorization header. Keep this path separate so the mature
+// file-download/resume behavior above remains unchanged.
+#if defined(FREEINK_NET_WOLFSSL)
+HttpDownloader::DownloadError runRequestWolf(const std::string& url, const char* method,
+                                             const std::string& payload, const std::vector<Header>& headers,
+                                             Sink& sink) {
+  freeink::SecureHttpClient http;
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  http.setInsecure();
+  http.setFollowRedirects(MAX_REDIRECTS);
+  if (!http.begin(url)) return HttpDownloader::HTTP_ERROR;
+  http.setUserAgent("CrossInk-ESP32-" CROSSINK_VERSION);
+  for (const auto& header : headers) http.addHeader(header.first, header.second);
+
+  const int status = http.sendRequest(
+      method, reinterpret_cast<const uint8_t*>(payload.data()), payload.size(),
+      [&http, &sink](const uint8_t* data, const size_t len) {
+        if (http.getStatus() != 200) return true;
+        if (sink.total == 0 && http.hasContentLength()) sink.total = http.getContentLength();
+        if (!sink.write(data, len)) return false;
+        sink.downloaded += len;
+        if (sink.progress && sink.total > 0) sink.progress(sink.downloaded, sink.total);
+        return true;
+      },
+      [&sink]() { return isCancelRequested(sink.cancelFlag, sink.shouldCancel); });
+  if (http.aborted()) return HttpDownloader::ABORTED;
+  if (status != 200) return HttpDownloader::HTTP_ERROR;
+  if (http.callbackAborted()) return HttpDownloader::FILE_ERROR;
+  return http.responseComplete() ? HttpDownloader::OK : HttpDownloader::HTTP_ERROR;
+}
+#endif
+
+#if !defined(FREEINK_NET_WOLFSSL)
+HttpDownloader::DownloadError runRequestDefault(const std::string& url, const char* method,
+                                                const std::string& payload, const std::vector<Header>& headers,
+                                                Sink& sink) {
+  const bool isPost = std::strcmp(method, "POST") == 0;
+  esp_http_client_config_t config = {};
+  config.url = url.c_str();
+  config.buffer_size = HTTP_RX_BUF;
+  config.buffer_size_tx = HTTP_TX_BUF;
+  config.timeout_ms = HTTP_TIMEOUT_MS;
+  config.crt_bundle_attach = esp_crt_bundle_attach;
+  config.keep_alive_enable = true;
+  config.method = isPost ? HTTP_METHOD_POST : HTTP_METHOD_GET;
+  auto* client = esp_http_client_init(&config);
+  if (!client) return HttpDownloader::HTTP_ERROR;
+  esp_http_client_set_header(client, "User-Agent", "CrossInk-ESP32-" CROSSINK_VERSION);
+  for (const auto& header : headers) {
+    esp_http_client_set_header(client, header.first.c_str(), header.second.c_str());
+  }
+  if (isPost) esp_http_client_set_post_field(client, payload.data(), payload.size());
+
+  esp_err_t err = esp_http_client_open(client, isPost ? payload.size() : 0);
+  if (err != ESP_OK) {
+    esp_http_client_cleanup(client);
+    return HttpDownloader::HTTP_ERROR;
+  }
+  int64_t responseLength = esp_http_client_fetch_headers(client);
+  int status = esp_http_client_get_status_code(client);
+  for (int hop = 0; isRedirect(status) && hop < MAX_REDIRECTS; ++hop) {
+    if (esp_http_client_set_redirection(client) != ESP_OK) break;
+    esp_http_client_close(client);
+    err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+      esp_http_client_cleanup(client);
+      return HttpDownloader::HTTP_ERROR;
+    }
+    responseLength = esp_http_client_fetch_headers(client);
+    status = esp_http_client_get_status_code(client);
+  }
+  if (status != 200 || responseLength < 0) {
+    esp_http_client_cleanup(client);
+    return HttpDownloader::HTTP_ERROR;
+  }
+  sink.total = responseLength > 0 ? static_cast<size_t>(responseLength) : 0;
+  auto buffer = makeUniqueNoThrow<char[]>(DEFAULT_DOWNLOAD_BUFFER_SIZE);
+  if (!buffer) {
+    esp_http_client_cleanup(client);
+    return HttpDownloader::HTTP_ERROR;
+  }
+  while (true) {
+    if (isCancelRequested(sink.cancelFlag, sink.shouldCancel)) {
+      esp_http_client_cleanup(client);
+      return HttpDownloader::ABORTED;
+    }
+    const int bytesRead = esp_http_client_read(client, buffer.get(), DEFAULT_DOWNLOAD_BUFFER_SIZE);
+    if (bytesRead < 0) {
+      esp_http_client_cleanup(client);
+      return HttpDownloader::HTTP_ERROR;
+    }
+    if (bytesRead == 0) break;
+    if (!sink.write(reinterpret_cast<const uint8_t*>(buffer.get()), static_cast<size_t>(bytesRead))) {
+      esp_http_client_cleanup(client);
+      return HttpDownloader::FILE_ERROR;
+    }
+    sink.downloaded += static_cast<size_t>(bytesRead);
+    if (sink.progress && sink.total > 0) sink.progress(sink.downloaded, sink.total);
+  }
+  const bool complete = esp_http_client_is_complete_data_received(client);
+  esp_http_client_cleanup(client);
+  return complete ? HttpDownloader::OK : HttpDownloader::HTTP_ERROR;
+}
+#endif
+
+HttpDownloader::DownloadError runFreshRssRequest(const std::string& url, const char* method,
+                                                 const std::string& payload, const std::vector<Header>& headers,
+                                                 Sink& sink) {
+#if defined(FREEINK_NET_WOLFSSL)
+  return runRequestWolf(url, method, payload, headers, sink);
+#else
+  return runRequestDefault(url, method, payload, headers, sink);
+#endif
+}
 
 void setRequestHeaders(esp_http_client_handle_t client, const std::string& username, const std::string& password,
                        size_t resumeOffset, bool sendAuthorization) {
@@ -545,6 +666,24 @@ bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent, c
 bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData, const std::string& username,
                               const std::string& password) {
   return streamUrl(url, onData, nullptr, username, password) == OK;
+}
+
+bool HttpDownloader::fetchUrlWithHeaders(const std::string& url, const DataCallback& onData,
+                                         const std::vector<Header>& headers) {
+  if (!onData) return false;
+  Sink sink;
+  sink.write = onData;
+  return runFreshRssRequest(url, "GET", "", headers, sink) == OK;
+}
+
+bool HttpDownloader::postForm(const std::string& url, const std::string& formBody, const DataCallback& onData,
+                              const std::vector<Header>& headers) {
+  if (!onData) return false;
+  Sink sink;
+  sink.write = onData;
+  std::vector<Header> requestHeaders = headers;
+  requestHeaders.emplace_back("Content-Type", "application/x-www-form-urlencoded");
+  return runFreshRssRequest(url, "POST", formBody, requestHeaders, sink) == OK;
 }
 
 HttpDownloader::DownloadError HttpDownloader::streamUrl(const std::string& url, const DataCallback& onData,

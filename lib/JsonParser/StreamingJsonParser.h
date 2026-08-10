@@ -14,6 +14,10 @@ struct JsonCallbacks {
   void (*onObjectEnd)(void* ctx);
   void (*onArrayStart)(void* ctx);
   void (*onArrayEnd)(void* ctx);
+  // Optional bounded-string callback. It receives long string values in
+  // chunks and marks the final chunk, while preserving the legacy onString
+  // callback for short values.
+  void (*onStringChunk)(void* ctx, const char* value, size_t len, bool final);
 };
 
 class StreamingJsonParser {

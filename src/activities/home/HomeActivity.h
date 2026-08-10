@@ -82,6 +82,7 @@ class HomeActivity final : public Activity {
   void onSettingsOpen();
   void onFileTransferOpen();
   void onOpdsBrowserOpen();
+  void onRssFeedsOpen();
   void onReadingStatsOpen();
   void onSavedItemsOpen();
 

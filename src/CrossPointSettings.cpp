@@ -405,6 +405,32 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["language"] = (language < getLanguageCount()) ? LANGUAGE_CODES[language] : "EN";
   doc["tiltPageTurnDirectionSchema"] = TILT_DIRECTION_SCHEMA_CURRENT;
   doc["clockDateHasBeenSynced"] = clockDateHasBeenSynced;
+  doc["rssListFilter"] = rssListFilter;
+  doc["rssListDensity"] = rssListDensity;
+  doc["rssDateDisplay"] = rssDateDisplay;
+  doc["rssShowArticleTitle"] = rssShowArticleTitle;
+  doc["rssShowArticleSeparator"] = rssShowArticleSeparator;
+  doc["rssFontFamily"] = rssFontFamily;
+  doc["rssFontSize"] = rssFontPointSize;
+  doc["rssLineSpacing"] = rssLineSpacing;
+  doc["rssParagraphSpacing"] = rssParagraphSpacing;
+  doc["rssParagraphIndent"] = rssParagraphIndent;
+  doc["rssParagraphAlignment"] = rssParagraphAlignment;
+  doc["rssScreenMargin"] = rssScreenMargin;
+  doc["rssSdFontFamilyName"] = rssSdFontFamilyName;
+  doc["rssListFontFamily"] = rssListFontFamily;
+  doc["rssListFontSize"] = rssListFontPointSize;
+  doc["rssListSdFontFamilyName"] = rssListSdFontFamilyName;
+  doc["rssRefreshButton"] = rssRefreshButton;
+  doc["rssMarkReadTiming"] = rssMarkReadTiming;
+  doc["rssArticleEndAction"] = rssArticleEndAction;
+  doc["rssShowButtonHints"] = rssShowButtonHints;
+  doc["rssStarAction"] = rssStarAction;
+  doc["freshRssArticleLimit"] = freshRssArticleLimit;
+  // Deprecated compatibility fields remain readable but do not affect the
+  // complete FreshRSS snapshot policy.
+  doc["rssCacheMode"] = rssCacheMode;
+  doc["rssMaxFullBodies"] = rssMaxFullBodies;
 }
 
 bool CrossPointSettings::fromJson(JsonVariantConst doc) {
@@ -563,7 +589,10 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
 
   const uint8_t storedFontFamily = doc["fontFamily"] | static_cast<uint8_t>(0);
   fontFamily = clamp(storedFontFamily, BUILTIN_FONT_COUNT, 0);
-  const char* sdFamily = doc["sdFontFamilyName"] | "";
+  // Preserve the compiled default when an older settings file has no SD
+  // family key.  This lets a fresh CrossInk install select bundled Rasa
+  // without requiring a settings rewrite first.
+  const char* sdFamily = doc["sdFontFamilyName"] | sdFontFamilyName;
   strncpy(sdFontFamilyName, sdFamily, sizeof(sdFontFamilyName) - 1);
   sdFontFamilyName[sizeof(sdFontFamilyName) - 1] = '\0';
   const char* dictionaryFamily = doc["dictionaryFont"] | "";
@@ -581,6 +610,42 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     language = static_cast<uint8_t>(I18n::languageFromCode(doc["language"].as<const char*>()));
   }
   clockDateHasBeenSynced = clamp(doc["clockDateHasBeenSynced"] | static_cast<uint8_t>(0), 2, 0);
+
+  rssListFilter = clamp(doc["rssListFilter"] | rssListFilter, RSS_LIST_FILTER_COUNT, RSS_ALL_ITEMS);
+  rssListDensity = clamp(doc["rssListDensity"] | rssListDensity, RSS_LIST_DENSITY_COUNT, RSS_COMPACT_LIST);
+  rssDateDisplay = clamp(doc["rssDateDisplay"] | rssDateDisplay, RSS_DATE_DISPLAY_COUNT, RSS_HUMAN_DATE);
+  rssShowArticleTitle = clamp(doc["rssShowArticleTitle"] | rssShowArticleTitle, 2, 1);
+  rssShowArticleSeparator = clamp(doc["rssShowArticleSeparator"] | rssShowArticleSeparator, 2, 1);
+  rssFontFamily = clamp(doc["rssFontFamily"] | rssFontFamily, BUILTIN_FONT_COUNT, NOTOSERIF);
+  rssFontPointSize = doc["rssFontSize"] | rssFontPointSize;
+  rssLineSpacing = clamp(doc["rssLineSpacing"] | rssLineSpacing, LINE_COMPRESSION_COUNT, NORMAL);
+  rssParagraphSpacing = clamp(doc["rssParagraphSpacing"] | rssParagraphSpacing, LINE_COMPRESSION_COUNT, NORMAL);
+  rssParagraphIndent = clamp(doc["rssParagraphIndent"] | rssParagraphIndent, RSS_PARAGRAPH_INDENT_COUNT,
+                             RSS_INDENT_FIRST_LINE);
+  rssParagraphAlignment = clamp(doc["rssParagraphAlignment"] | rssParagraphAlignment, PARAGRAPH_ALIGNMENT_COUNT,
+                                JUSTIFIED);
+  rssScreenMargin = std::clamp<uint8_t>(doc["rssScreenMargin"] | rssScreenMargin, SCREEN_MARGIN_MIN, SCREEN_MARGIN_MAX);
+  const char* rssBodyFamily = doc["rssSdFontFamilyName"] | rssSdFontFamilyName;
+  strncpy(rssSdFontFamilyName, rssBodyFamily, sizeof(rssSdFontFamilyName) - 1);
+  rssSdFontFamilyName[sizeof(rssSdFontFamilyName) - 1] = '\0';
+  rssListFontFamily = clamp(doc["rssListFontFamily"] | rssListFontFamily, BUILTIN_FONT_COUNT, NOTOSERIF);
+  rssListFontPointSize = doc["rssListFontSize"] | rssListFontPointSize;
+  const char* rssListFamily = doc["rssListSdFontFamilyName"] | rssListSdFontFamilyName;
+  strncpy(rssListSdFontFamilyName, rssListFamily, sizeof(rssListSdFontFamilyName) - 1);
+  rssListSdFontFamilyName[sizeof(rssListSdFontFamilyName) - 1] = '\0';
+  rssRefreshButton = clamp(doc["rssRefreshButton"] | rssRefreshButton, RSS_REFRESH_BUTTON_COUNT, RSS_REFRESH_LEFT);
+  rssMarkReadTiming = clamp(doc["rssMarkReadTiming"] | rssMarkReadTiming, RSS_MARK_READ_TIMING_COUNT,
+                            RSS_MARK_READ_ON_OPEN);
+  rssArticleEndAction = clamp(doc["rssArticleEndAction"] | rssArticleEndAction, RSS_ARTICLE_END_ACTION_COUNT,
+                              RSS_RETURN_TO_LIST);
+  rssShowButtonHints = clamp(doc["rssShowButtonHints"] | rssShowButtonHints, 2, 1);
+  rssStarAction = clamp(doc["rssStarAction"] | rssStarAction, RSS_STAR_ACTION_COUNT, RSS_STAR_RIGHT_BUTTON);
+  const uint16_t storedFreshLimit = doc["freshRssArticleLimit"] | freshRssArticleLimit;
+  freshRssArticleLimit = (storedFreshLimit == 200 || storedFreshLimit == 500 || storedFreshLimit == 1000)
+                             ? storedFreshLimit
+                             : 200;
+  rssCacheMode = clamp(doc["rssCacheMode"] | rssCacheMode, RSS_CACHE_MODE_COUNT, RSS_CACHE_AUTOMATIC);
+  rssMaxFullBodies = doc["rssMaxFullBodies"] | rssMaxFullBodies;
 
   if (needsResave) requestResave();
   LOG_DBG("CPS", "Settings loaded from file");
@@ -828,6 +893,18 @@ ReaderRenderSpec CrossPointSettings::readerRenderSpec(const uint16_t viewportWid
 
 float CrossPointSettings::getReaderLineCompression() const {
   return static_cast<float>(clampedLineHeightPercent(lineHeightPercent)) / 100.0f;
+}
+
+float CrossPointSettings::getRssLineCompression() const {
+  switch (rssLineSpacing) {
+    case TIGHT:
+      return 0.95f;
+    case WIDE:
+      return 1.10f;
+    case NORMAL:
+    default:
+      return 1.0f;
+  }
 }
 
 unsigned long CrossPointSettings::getSleepTimeoutMs() const {

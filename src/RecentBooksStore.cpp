@@ -2,6 +2,7 @@
 
 #include <Epub.h>
 #include <FsHelpers.h>
+#include <GujaratiIntegration.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Serialization.h>
@@ -41,6 +42,12 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
     book.path = obj["path"] | "";
     book.title = obj["title"] | "";
     book.author = obj["author"] | "";
+    // Entries saved before Gujarati shaping was wired into this store are
+    // stored as raw, unshaped Gujarati. Re-shaping here is idempotent (a
+    // no-op for already-shaped or non-Gujarati text), so this both fixes old
+    // entries on load and covers freshly-written ones without a format bump.
+    GujaratiIntegration::shapeLongUiString(book.title);
+    GujaratiIntegration::shapeLongUiString(book.author);
     book.coverBmpPath = obj["coverBmpPath"] | "";
     const int storedCoverState = obj["coverState"] | 0;
     if (storedCoverState == static_cast<int>(RecentBook::CoverState::Missing)) {
@@ -62,12 +69,20 @@ void RecentBooksStore::addOrUpdateBook(const std::string& path, const std::strin
   // Drop stale entries first so a new add can't evict a valid book in their stead.
   pruneMissing();
 
+  // Book title/author come straight from EPUB/XTC metadata and bypass
+  // ParsedText's parse-time shaping, so shape here once, at write time,
+  // rather than in every theme that later draws these strings.
+  std::string shapedTitle = title;
+  std::string shapedAuthor = author;
+  GujaratiIntegration::shapeLongUiString(shapedTitle);
+  GujaratiIntegration::shapeLongUiString(shapedAuthor);
+
   // Remove existing entry if present
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
   if (it != recentBooks.end()) {
-    it->title = title;
-    it->author = author;
+    it->title = shapedTitle;
+    it->author = shapedAuthor;
     it->coverBmpPath = coverBmpPath;
     it->coverState = coverState;
     if (it != recentBooks.begin()) {
@@ -76,7 +91,7 @@ void RecentBooksStore::addOrUpdateBook(const std::string& path, const std::strin
       recentBooks.insert(recentBooks.begin(), std::move(book));
     }
   } else {
-    recentBooks.insert(recentBooks.begin(), {path, title, author, coverBmpPath, coverState});
+    recentBooks.insert(recentBooks.begin(), {path, shapedTitle, shapedAuthor, coverBmpPath, coverState});
     if (recentBooks.size() > MAX_RECENT_BOOKS) {
       recentBooks.resize(MAX_RECENT_BOOKS);
     }
@@ -94,6 +109,8 @@ bool RecentBooksStore::updateBook(const std::string& path, const std::string& ti
   RecentBook& book = *it;
   book.title = title;
   book.author = author;
+  GujaratiIntegration::shapeLongUiString(book.title);
+  GujaratiIntegration::shapeLongUiString(book.author);
   book.coverBmpPath = coverBmpPath;
   book.coverState = coverState;
   saveToFile();

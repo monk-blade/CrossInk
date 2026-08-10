@@ -16,6 +16,7 @@
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
 #include "browser/OpdsBookBrowserActivity.h"
+#include "browser/RssFeedListActivity.h"
 #include "components/TouchRegistry.h"
 #include "home/AlertActivity.h"
 #include "home/CrashActivity.h"
@@ -360,6 +361,10 @@ void ActivityManager::goToBrowser() {
   }
 }
 
+void ActivityManager::goToRssFeeds() {
+  replaceActivity(std::make_unique<RssFeedListActivity>(renderer, mappedInput));
+}
+
 bool ActivityManager::goToOpdsServer(const uint32_t serverIndex, const bool networkBootReady) {
 #ifndef SIMULATOR
   if (!networkBootReady) {
@@ -422,6 +427,8 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, const bool initialFul
       initialMenuItem = HomeMenuItem::RECENTS;
     } else if (activityName == "OpdsBookBrowser") {
       initialMenuItem = HomeMenuItem::OPDS_BROWSER;
+    } else if (activityName == "RssFeedList") {
+      initialMenuItem = HomeMenuItem::RSS_READER;
     } else if (activityName == "CrossPointWebServer") {
       initialMenuItem = HomeMenuItem::FILE_TRANSFER;
     } else if (activityName == "NearbyStatsSync") {

@@ -245,16 +245,16 @@ void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {
   const auto readerIt = renderer.getFontMap().find(manager_.getFontId(familyName));
   if (readerIt == renderer.getFontMap().end()) return;
 
-  static constexpr uint32_t kCjkProbes[] = {0x4E00, 0x3042, 0x30A2, 0xAC00};
-  bool hasCjk = false;
-  for (const uint32_t cp : kCjkProbes) {
+  static constexpr uint32_t kFallbackProbes[] = {0x4E00, 0x3042, 0x30A2, 0xAC00, 0x0A95};
+  bool hasFallbackCoverage = false;
+  for (const uint32_t cp : kFallbackProbes) {
     if (readerIt->second.hasCodepoint(cp)) {
-      hasCjk = true;
+      hasFallbackCoverage = true;
       break;
     }
   }
-  if (!hasCjk) {
-    LOG_DBG("SDFS", "%s has no CJK coverage - skipping UI fallback sizes", familyName.c_str());
+  if (!hasFallbackCoverage) {
+    LOG_DBG("SDFS", "%s has no supported fallback coverage - skipping UI fallback sizes", familyName.c_str());
     return;
   }
 
@@ -274,15 +274,15 @@ void SdCardFontSystem::setupUiFallbacksDirect(GfxRenderer& renderer, const char*
   const auto readerIt = renderer.getFontMap().find(manager_.getFontId(manager_.currentFamilyName()));
   if (readerIt == renderer.getFontMap().end()) return;
 
-  static constexpr uint32_t kCjkProbes[] = {0x4E00, 0x3042, 0x30A2, 0xAC00};
-  bool hasCjk = false;
-  for (const uint32_t cp : kCjkProbes) {
+  static constexpr uint32_t kFallbackProbes[] = {0x4E00, 0x3042, 0x30A2, 0xAC00, 0x0A95};
+  bool hasFallbackCoverage = false;
+  for (const uint32_t cp : kFallbackProbes) {
     if (readerIt->second.hasCodepoint(cp)) {
-      hasCjk = true;
+      hasFallbackCoverage = true;
       break;
     }
   }
-  if (!hasCjk) return;
+  if (!hasFallbackCoverage) return;
 
   for (const auto& ui : kUiFontSizes) {
     char path[160] = {};

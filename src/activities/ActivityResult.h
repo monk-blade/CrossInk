@@ -45,6 +45,10 @@ struct PageResult {
   uint32_t page = 0;
 };
 
+struct RssArticleResult {
+  bool openNextUnread = false;
+};
+
 struct ProgressChangeResult {
   int spineIndex = 0;
   int page = 0;
@@ -120,7 +124,8 @@ struct ClippingJumpResult {
 };
 
 using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
-                                   IntervalResult, OptionSelectionResult, PageResult, ProgressChangeResult, SyncResult,
+                                   IntervalResult, OptionSelectionResult, PageResult, RssArticleResult, ProgressChangeResult,
+                                   SyncResult,
                                    NetworkModeResult, FootnoteResult, BookmarkResult, FileBrowserActionResult,
                                    FilePathResult, WordResult, ReadingStatsResult, ClippingResult, ClippingJumpResult>;
 

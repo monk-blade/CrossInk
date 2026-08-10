@@ -16,9 +16,9 @@
 
 namespace {
 constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
-// v60: reserve page-edge space for ruby overhang and prefer longer equal-cost
-// CJK lines, invalidating cached pagination from the prior layout contract.
-constexpr uint8_t SECTION_FILE_VERSION = 60;
+// v61: cache Gujarati-shaped EPUB words so EPUB and FreshRSS use the same
+// renderer input and do not reshape on every page turn.
+constexpr uint8_t SECTION_FILE_VERSION = 61;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.

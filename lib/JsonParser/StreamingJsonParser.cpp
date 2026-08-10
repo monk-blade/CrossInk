@@ -224,6 +224,11 @@ void StreamingJsonParser::handleSkipString(char c) {
 }
 
 void StreamingJsonParser::appendToken(char c) {
+  if (state == State::IN_STRING_VALUE && cb.onStringChunk && tokenLen == TOKEN_BUF_SIZE - 1) {
+    cb.onStringChunk(cb.ctx, tokenBuf, tokenLen, false);
+    tokenLen = 0;
+    return;
+  }
   if (tokenLen < TOKEN_BUF_SIZE - 1) {
     tokenBuf[tokenLen++] = c;
   } else {
@@ -239,6 +244,10 @@ void StreamingJsonParser::emitToken() {
     }
     state = State::SCANNING;
   } else {
+    if (cb.onStringChunk) {
+      tokenBuf[tokenLen] = '\0';
+      cb.onStringChunk(cb.ctx, tokenBuf, tokenLen, true);
+    }
     if (!tokenOverflow && cb.onString) {
       tokenBuf[tokenLen] = '\0';
       cb.onString(cb.ctx, tokenBuf, tokenLen);

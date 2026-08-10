@@ -54,6 +54,7 @@ enum class HomeMenuAction {
   BrowseFiles,
   ContinueReading,
   RecentBooks,
+  RssFeeds,
   OpdsBrowser,
   ReadingStats,
   Bookmarks,
@@ -263,6 +264,7 @@ void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasRe
                          bool hasClippings) {
   items.push({tr(STR_BROWSE_FILES), Folder, HomeMenuAction::BrowseFiles});
   items.push({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks});
+  items.push({tr(STR_RSS_FEEDS), Rss, HomeMenuAction::RssFeeds});
 
   if (hasOpdsServers) {
     items.push({tr(STR_OPDS_BROWSER), Library, HomeMenuAction::OpdsBrowser});
@@ -287,6 +289,7 @@ HomeMenuEntries buildHomeMenuItems(bool hasOpdsServers, bool hasReadingStats, bo
 HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks, bool hasClippings) {
   HomeMenuEntries items;
   items.push({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks});
+  items.push({tr(STR_RSS_FEEDS), Rss, HomeMenuAction::RssFeeds});
 
   if (hasOpdsServers) {
     items.push({tr(STR_OPDS_BROWSER), Library, HomeMenuAction::OpdsBrowser});
@@ -318,6 +321,8 @@ HomeMenuAction homeActionForInitialMenuItem(HomeMenuItem item) {
       return HomeMenuAction::BrowseFiles;
     case HomeMenuItem::RECENTS:
       return HomeMenuAction::RecentBooks;
+    case HomeMenuItem::RSS_READER:
+      return HomeMenuAction::RssFeeds;
     case HomeMenuItem::OPDS_BROWSER:
       return HomeMenuAction::OpdsBrowser;
     case HomeMenuItem::FILE_TRANSFER:
@@ -593,20 +598,18 @@ static_assert(HomeActivity::kMaxCachedBooks >= LyraCarouselMetrics::values.homeR
 
 int HomeActivity::getMenuItemCount() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  int count = 4;  // File Browser, Recents, File transfer, Settings
+  // Keep hardware navigation in lockstep with the rows built by
+  // buildSelectableHomeMenuItems().  The old hard-coded base count was four,
+  // while the current home menu has five base actions (including RSS), which
+  // made Settings unreachable with Up/Down/Confirm even though it was drawn.
+  const bool includeContinueReading = metrics.homeContinueReadingInMenu && !recentBooks.empty();
+  int count = static_cast<int>(buildSelectableHomeMenuItems(hasOpdsServers, hasReadingStats, hasBookmarks,
+                                                             hasClippings, includeContinueReading)
+                                   .size());
   if (!metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
+    // In this layout recent books are rendered before the action rows and are
+    // part of the same selector sequence.
     count += getVisibleRecentBookCount();
-  } else if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
-    count++;  // Continue Reading menu item
-  }
-  if (hasOpdsServers) {
-    count++;
-  }
-  if (hasReadingStats) {
-    count++;
-  }
-  if (hasBookmarks || hasClippings) {
-    count++;
   }
   return count;
 }
@@ -1436,6 +1439,9 @@ void HomeActivity::loop() {
           case HomeMenuAction::RecentBooks:
             onRecentsOpen();
             break;
+          case HomeMenuAction::RssFeeds:
+            onRssFeedsOpen();
+            break;
           case HomeMenuAction::OpdsBrowser:
             onOpdsBrowserOpen();
             break;
@@ -1645,6 +1651,9 @@ void HomeActivity::loop() {
         break;
       case HomeMenuAction::RecentBooks:
         onRecentsOpen();
+        break;
+      case HomeMenuAction::RssFeeds:
+        onRssFeedsOpen();
         break;
       case HomeMenuAction::OpdsBrowser:
         onOpdsBrowserOpen();
@@ -2118,6 +2127,8 @@ void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
+
+void HomeActivity::onRssFeedsOpen() { activityManager.goToRssFeeds(); }
 
 void HomeActivity::onReadingStatsOpen() {
   const int highlightedBookIdx = getHighlightedBookIndex();

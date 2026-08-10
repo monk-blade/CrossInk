@@ -19,9 +19,11 @@
 #include "ClockSyncActivity.h"
 #include "CrossPointSettings.h"
 #include "FontSelectionActivity.h"
+#include "FreshRssSettingsActivity.h"
 #include "KOReaderSettingsActivity.h"
 #include "MappedInputManager.h"
 #include "OpdsServerListActivity.h"
+#include "RssSettingsActivity.h"
 #include "SdCardFontSystem.h"
 #include "SdFirmwareUpdateActivity.h"
 #include "SettingsList.h"
@@ -280,6 +282,8 @@ void SettingsActivity::rebuildSettingsLists() {
 #endif
   displaySleepSettings = buildDisplaySleepSettingsList(allSettings);
   readerSettings = buildReaderSettingsParentList(allSettings);
+  readerSettings.push_back(SettingInfo::Action(StrId::STR_RSS_SETTINGS, SettingAction::RssSettings));
+  readerSettings.push_back(SettingInfo::Action(StrId::STR_FRESHRSS_SETTINGS, SettingAction::FreshRssSettings));
   readerFontSettings = buildReaderFontSettingsList(allSettings);
   readerPageLayoutSettings = buildReaderPageLayoutSettingsList(allSettings);
   systemSettings = buildSystemSettingsParentList(allSettings);
@@ -960,6 +964,20 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::ClockSync:
         startActivityForResult(std::make_unique<ClockSyncActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::RssSettings:
+        startActivityForResult(std::make_unique<RssSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry()),
+                               [this](const ActivityResult&) {
+                                 SETTINGS.saveToFile();
+                                 rebuildSettingsLists();
+                               });
+        break;
+      case SettingAction::FreshRssSettings:
+        startActivityForResult(std::make_unique<FreshRssSettingsActivity>(renderer, mappedInput),
+                               [this](const ActivityResult&) {
+                                 SETTINGS.saveToFile();
+                                 rebuildSettingsLists();
+                               });
         break;
       case SettingAction::ReaderFontOptions:
       case SettingAction::ReaderPageLayout:

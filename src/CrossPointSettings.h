@@ -155,7 +155,15 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   };
 
   // Font family options (built-in fonts only; SD card fonts use sdFontFamilyName)
-  enum FONT_FAMILY { LEXENDDECA = 0, BITTER = 1, FONT_FAMILY_COUNT };
+  enum FONT_FAMILY {
+    LEXENDDECA = 0,
+    BITTER = 1,
+    // Compatibility names used by the shared RSS activities. CrossInk keeps
+    // its Lexend/Bitter book catalog; RSS SD families are selected separately.
+    NOTOSERIF = LEXENDDECA,
+    NOTOSANS = BITTER,
+    FONT_FAMILY_COUNT
+  };
   static constexpr uint8_t BUILTIN_FONT_COUNT = FONT_FAMILY_COUNT;
   // Font size options
   enum FONT_SIZE { TINY = 0, SMALL = 1, MEDIUM = 2, LARGE = 3, FONT_SIZE_COUNT };
@@ -177,6 +185,34 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     BOOK_STYLE = 4,
     PARAGRAPH_ALIGNMENT_COUNT
   };
+  enum RSS_PARAGRAPH_INDENT { RSS_INDENT_NONE = 0, RSS_INDENT_FIRST_LINE = 1, RSS_PARAGRAPH_INDENT_COUNT };
+  enum RSS_LIST_FILTER { RSS_ALL_ITEMS = 0, RSS_UNREAD_ONLY = 1, RSS_LIST_FILTER_COUNT };
+  enum RSS_LIST_DENSITY { RSS_COMPACT_LIST = 0, RSS_COMFORTABLE_LIST = 1, RSS_LIST_DENSITY_COUNT };
+  enum RSS_DATE_DISPLAY { RSS_HUMAN_DATE = 0, RSS_COMPACT_DATE = 1, RSS_HIDE_DATE = 2, RSS_DATE_DISPLAY_COUNT };
+  enum RSS_REFRESH_BUTTON {
+    RSS_REFRESH_LEFT = 0,
+    RSS_REFRESH_RIGHT = 1,
+    RSS_REFRESH_DISABLED = 2,
+    RSS_REFRESH_BUTTON_COUNT
+  };
+  enum RSS_MARK_READ_TIMING {
+    RSS_MARK_READ_ON_OPEN = 0,
+    RSS_MARK_READ_ON_LAST_PAGE = 1,
+    RSS_MARK_READ_TIMING_COUNT
+  };
+  enum RSS_ARTICLE_END_ACTION {
+    RSS_RETURN_TO_LIST = 0,
+    RSS_OPEN_NEXT_UNREAD = 1,
+    RSS_ARTICLE_END_ACTION_COUNT
+  };
+  enum RSS_STAR_ACTION {
+    RSS_STAR_DISABLED = 0,
+    RSS_STAR_RIGHT_BUTTON = 1,
+    RSS_STAR_LONG_OPEN = 2,
+    RSS_STAR_ACTION_COUNT
+  };
+  enum RSS_CACHE_MODE { RSS_CACHE_AUTOMATIC = 0, RSS_CACHE_MANUAL = 1, RSS_CACHE_MODE_COUNT };
+  static constexpr uint8_t RSS_DEFAULT_MAX_FULL_BODIES = 8;
 
   // Auto-sleep timeout options (in minutes)
   enum SLEEP_TIMEOUT {
@@ -392,7 +428,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t fontFamily = LEXENDDECA;
   // The physical reader size selected by the user. Built-in and SD-card font
   // families resolve this to their closest available file.
-  uint8_t readerFontPointSize = 14;
+  // Rasa is the bundled Gujarati reader family.  Keep the default at the
+  // same compact 12pt profile used by the CrossPoint Gujarati build.
+  uint8_t readerFontPointSize = 12;
   // Transient compatibility state for JSON settings written before fontSize
   // stored a point size. SdCardFontSystem resolves it once the family catalog
   // is available, then persists readerFontPointSize.
@@ -402,6 +440,31 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t lineHeightPercent = 100;
   uint8_t wordSpacing = 0;
   uint8_t paragraphAlignment = JUSTIFIED;
+  // FreshRSS navigation and article profiles are independent from book text.
+  uint8_t rssListFilter = RSS_ALL_ITEMS;
+  uint8_t rssListDensity = RSS_COMFORTABLE_LIST;
+  uint8_t rssDateDisplay = RSS_COMPACT_DATE;
+  uint8_t rssShowArticleTitle = 1;
+  uint8_t rssShowArticleSeparator = 1;
+  uint8_t rssFontFamily = NOTOSERIF;
+  uint8_t rssFontPointSize = 12;
+  uint8_t rssLineSpacing = NORMAL;
+  uint8_t rssParagraphSpacing = NORMAL;
+  uint8_t rssParagraphIndent = RSS_INDENT_FIRST_LINE;
+  uint8_t rssParagraphAlignment = JUSTIFIED;
+  uint8_t rssScreenMargin = 5;
+  char rssSdFontFamilyName[32] = "Rasa";
+  uint8_t rssListFontFamily = NOTOSERIF;
+  uint8_t rssListFontPointSize = 12;
+  char rssListSdFontFamilyName[32] = "IBMPlexSansCondensed";
+  uint8_t rssRefreshButton = RSS_REFRESH_LEFT;
+  uint8_t rssMarkReadTiming = RSS_MARK_READ_ON_OPEN;
+  uint8_t rssArticleEndAction = RSS_RETURN_TO_LIST;
+  uint8_t rssShowButtonHints = 1;
+  uint8_t rssStarAction = RSS_STAR_RIGHT_BUTTON;
+  uint16_t freshRssArticleLimit = 200;
+  uint8_t rssCacheMode = RSS_CACHE_AUTOMATIC;
+  uint8_t rssMaxFullBodies = RSS_DEFAULT_MAX_FULL_BODIES;
   // Auto-sleep timeout setting (default 10 minutes). Legacy sleepTimeout enum values are migration-only.
   uint8_t sleepTimeoutMinutes = 10;
   // E-ink refresh frequency (default 15 pages)
@@ -445,7 +508,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Per-book EPUB render mode runtime value. This is intentionally not saved as a global setting.
   uint8_t epubRenderMode = 0;
   // SD card font family name, including optional range suffix (empty = use built-in fontFamily)
-  char sdFontFamilyName[64] = "";
+  // Empty means built-in fontFamily.  CrossInk ships Rasa CPFonts, so new
+  // settings select the Gujarati family immediately when the SD font system
+  // starts.  Existing persisted settings remain user-controlled.
+  char sdFontFamilyName[64] = "Rasa";
   // Global dictionary SD-card font (empty = use the reader font).
   char dictionarySdFontFamilyName[64] = "";
   // Zero follows the active reader size.
@@ -505,6 +571,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static constexpr uint8_t MAX_SLEEP_TIMEOUT_MINUTES = SLEEP_TIMEOUT_NEVER_MINUTES;
   static constexpr uint8_t SD_FONT_MAX_SIZE_STEPS = 8;
   static constexpr uint8_t MIN_READER_FONT_POINT_SIZE = 8;
+  static constexpr uint8_t SCREEN_MARGIN_MIN = 5;
+  static constexpr uint8_t SCREEN_MARGIN_MAX = 40;
+  static constexpr uint8_t SCREEN_MARGIN_STEP = 5;
   static constexpr uint8_t MIN_LINE_HEIGHT_PERCENT = 70;
   static constexpr uint8_t MAX_LINE_HEIGHT_PERCENT = 200;
   static constexpr uint8_t LINE_HEIGHT_PERCENT_STEP = 1;
@@ -613,6 +682,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
  public:
   float getReaderLineCompression() const;
+  float getRssLineCompression() const;
   unsigned long getSleepTimeoutMs() const;
   int getRefreshFrequency() const;
 };

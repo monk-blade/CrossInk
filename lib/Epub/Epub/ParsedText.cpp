@@ -4,6 +4,7 @@
 #include <ArenaVector.h>
 #include <BidiUtils.h>
 #include <GfxRenderer.h>
+#include <GujaratiIntegration.h>
 #include <Logging.h>
 #include <Utf8.h>
 
@@ -561,6 +562,11 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
   // precomposed glyph is used instead. This runs once per word at layout time (the
   // result is cached in the section file) and is a cheap no-op for mark-free text.
   word = utf8ComposeNfc(word);
+
+  // Shape Gujarati once when the section cache is built. This keeps EPUB and
+  // FreshRSS article text on the same PUA glyph stream and avoids doing Indic
+  // shaping during every page turn.
+  GujaratiIntegration::shapeWord(word);
 
   EpdFontFamily::Style baseStyle = fontStyle;
   if (underline) {

@@ -5,6 +5,7 @@
 #include <functional>
 #include <string>
 #include <utility>
+#include <vector>
 
 /**
  * HTTP client utility for fetching content and downloading files.
@@ -18,6 +19,7 @@ class HttpDownloader {
   // Called with each body chunk as it arrives; return false to abort. Lets a
   // streaming parser consume the response without buffering the whole body.
   using DataCallback = std::function<bool(const uint8_t* data, size_t len)>;
+  using Header = std::pair<std::string, std::string>;
 
   enum DownloadError {
     OK = 0,
@@ -62,6 +64,11 @@ class HttpDownloader {
    */
   static bool fetchUrl(const std::string& url, const DataCallback& onData, const std::string& username = "",
                        const std::string& password = "");
+
+  static bool fetchUrlWithHeaders(const std::string& url, const DataCallback& onData,
+                                  const std::vector<Header>& headers);
+  static bool postForm(const std::string& url, const std::string& formBody, const DataCallback& onData,
+                       const std::vector<Header>& headers = {});
 
   /**
    * Stream a URL with cancellation/progress support and a detailed result.

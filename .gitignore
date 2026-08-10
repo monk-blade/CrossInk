@@ -1,4 +1,6 @@
 .pio
+/.platformio/
+.work/
 .idea
 .DS_Store
 .vscode

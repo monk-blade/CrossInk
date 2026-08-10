@@ -15,6 +15,7 @@ namespace ReaderUtils {
 
 constexpr unsigned long SKIP_HOLD_MS = 700;
 constexpr unsigned long GO_HOME_MS = 1000;
+constexpr unsigned long BOOKMARK_HOLD_MS = 1000;
 constexpr uint8_t STATUS_BAR_TEXT_PADDING = 3;
 // Gap between the top clock status bar band and the first line of book text.
 // Signed so negative values pull the text up toward the clock (unsigned would wrap

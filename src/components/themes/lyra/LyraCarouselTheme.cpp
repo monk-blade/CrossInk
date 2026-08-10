@@ -1,6 +1,7 @@
 #include "LyraCarouselTheme.h"
 
 #include <Bitmap.h>
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -353,6 +354,16 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   const int textMaxWidth = std::min(screenW - 40, kCenterCoverMaxW + 40);
   const auto titleLines =
       renderer.wrappedText(kTitleFontId, recentBooks[centerIdx].title.c_str(), textMaxWidth, 2, EpdFontFamily::BOLD);
+  if (!recentBooks[centerIdx].title.empty()) {
+    auto* fcm = renderer.getFontCacheManager();
+    if (fcm) {
+      auto scope = fcm->createPrewarmScope();
+      for (const auto& line : titleLines) {
+        renderer.drawText(kTitleFontId, 0, 0, line.c_str(), true, EpdFontFamily::BOLD);
+      }
+      scope.endScanAndPrewarm();
+    }
+  }
   const int titleLineHeight = renderer.getLineHeight(kTitleFontId);
   const int titleBlockHeight = titleLineHeight * static_cast<int>(titleLines.size());
   const int reservedTitleBlockHeight = titleLineHeight * 2;
