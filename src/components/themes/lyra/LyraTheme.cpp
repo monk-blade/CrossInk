@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -566,10 +567,18 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 
     auto titleLines = renderer.wrappedText(UI_12_FONT_ID, book.title.c_str(), textWidth, 3, EpdFontFamily::BOLD);
 
+    // The prewarm scope must stay alive until after the real, positioned
+    // drawText() calls below: its destructor clears the SD font's prewarmed
+    // glyph cache (see FontCacheManager::PrewarmScope), so ending it here
+    // discarded the batch-loaded glyphs before they were ever drawn. The real
+    // draw then fell back to the much smaller on-demand overflow cache
+    // (8 glyphs, shared across styles), which under memory pressure produced
+    // replacement-glyph tofu instead of the prewarmed Gujarati/CJK text.
+    std::optional<FontCacheManager::PrewarmScope> prewarmScope;
     if (!book.title.empty()) {
       auto* fcm = renderer.getFontCacheManager();
       if (fcm) {
-        auto scope = fcm->createPrewarmScope();
+        prewarmScope.emplace(fcm->createPrewarmScope());
         for (const auto& line : titleLines) {
           renderer.drawText(UI_12_FONT_ID, 0, 0, line.c_str(), true, EpdFontFamily::BOLD);
         }
@@ -577,7 +586,7 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
         if (!book.author.empty()) {
           renderer.drawText(UI_10_FONT_ID, 0, 0, book.author.c_str(), true, EpdFontFamily::REGULAR);
         }
-        scope.endScanAndPrewarm();
+        prewarmScope->endScanAndPrewarm();
       }
     }
 

@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -354,14 +355,21 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   const int textMaxWidth = std::min(screenW - 40, kCenterCoverMaxW + 40);
   const auto titleLines =
       renderer.wrappedText(kTitleFontId, recentBooks[centerIdx].title.c_str(), textMaxWidth, 2, EpdFontFamily::BOLD);
+  // Must stay alive until after the real, positioned drawText() calls further
+  // down: the destructor clears the SD font's prewarmed glyph cache (see
+  // FontCacheManager::PrewarmScope), so ending it here discarded the
+  // batch-loaded glyphs before they were drawn, forcing the real draw through
+  // the much smaller on-demand overflow cache and showing replacement-glyph
+  // tofu for scripts like Gujarati/CJK under memory pressure.
+  std::optional<FontCacheManager::PrewarmScope> prewarmScope;
   if (!recentBooks[centerIdx].title.empty()) {
     auto* fcm = renderer.getFontCacheManager();
     if (fcm) {
-      auto scope = fcm->createPrewarmScope();
+      prewarmScope.emplace(fcm->createPrewarmScope());
       for (const auto& line : titleLines) {
         renderer.drawText(kTitleFontId, 0, 0, line.c_str(), true, EpdFontFamily::BOLD);
       }
-      scope.endScanAndPrewarm();
+      prewarmScope->endScanAndPrewarm();
     }
   }
   const int titleLineHeight = renderer.getLineHeight(kTitleFontId);

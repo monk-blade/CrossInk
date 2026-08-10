@@ -57,5 +57,7 @@ class FontCacheManager {
   ScanMode scanMode_ = ScanMode::None;
   std::string scanText_;
   uint32_t scanStyleCounts_[4] = {};
-  int scanFontId_ = -1;
+  // 0 = unset. Font IDs are name hashes that may be negative, so 0 (reserved as
+  // the "not found" sentinel in fontIds.h) is the only safe "no font yet" value.
+  int scanFontId_ = 0;
 };

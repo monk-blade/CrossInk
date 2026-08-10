@@ -73,7 +73,21 @@ void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::S
   } else {
     scanText_ += text;
   }
-  if (scanFontId_ < 0) scanFontId_ = fontId;
+  // Font IDs are name hashes and are routinely negative (see fontIds.h, where 0
+  // is the reserved "not found" sentinel), so a `< 0` test never meant "unset":
+  // it let every later recordText() overwrite the font chosen by the first one.
+  // A scope that mixed an SD fallback string with a built-in one (e.g. a
+  // Gujarati book title followed by a Latin ellipsis) therefore prewarmed the
+  // built-in font and left the SD font cold, and cold SD glyphs render as tofu.
+  //
+  // Lock onto the first recorded font, but let an SD-card font take precedence:
+  // built-in fonts decompress glyphs on demand, while SD glyphs are only
+  // reachable through the prewarmed page cache (EpdFontFamily::findGlyphData
+  // does not consult the on-demand miss handler).
+  const bool scanFontIsSd = sdCardFonts_.count(scanFontId_) > 0;
+  if (scanFontId_ == 0 || (!scanFontIsSd && sdCardFonts_.count(fontId) > 0)) {
+    scanFontId_ = fontId;
+  }
   const uint8_t baseStyle = static_cast<uint8_t>(style) & 0x03;
   const unsigned char* p = reinterpret_cast<const unsigned char*>(text);
   uint32_t cpCount = 0;
@@ -94,7 +108,7 @@ FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager, const Pr
   manager_->scanText_.clear();
   manager_->scanText_.reserve(2048);  // Pre-allocate to avoid heap fragmentation from repeated concat
   memset(manager_->scanStyleCounts_, 0, sizeof(manager_->scanStyleCounts_));
-  manager_->scanFontId_ = -1;
+  manager_->scanFontId_ = 0;  // 0 is the reserved "no font" sentinel (fontIds.h)
 }
 
 bool FontCacheManager::PrewarmScope::endScanAndPrewarm() {

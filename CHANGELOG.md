@@ -1,3 +1,10 @@
+## [Unreleased]
+
+### Fixed
+
+- Book titles and authors in scripts that need an SD-card font (such as Gujarati) no longer render as diamond placeholders on the Home screen when the same screen also draws text in a built-in font.
+- Book titles and authors on the Recent Books screen now render correctly in scripts that need an SD-card font, instead of showing diamond placeholders for characters the previously drawn screen did not already use.
+
 ## [v1.5.0] - 2026-08-08
 
 ### Added

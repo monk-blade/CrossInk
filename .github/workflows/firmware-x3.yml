@@ -1,0 +1,72 @@
+name: Build X3 Firmware
+
+# Produces a flashable X3/X4 application image on demand.
+# The artifact is the `default` PlatformIO env output, written to flash at
+# 0x10000 (see board_upload.offset_address in platformio.ini).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-platformio-default-${{ hashFiles('platformio.ini', 'platformio.local.example.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-platformio-default-
+            ${{ runner.os }}-platformio-
+
+      - name: Install PlatformIO Core
+        run: uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
+
+      - name: Build default (X3/X4) firmware
+        run: |
+          set -euo pipefail
+          pio run -e default | tee pio-default.log
+
+      - name: Summarize build
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA::7}"
+          cp .pio/build/default/firmware-x3-x4.bin "firmware-x3-${SHORT_SHA}.bin"
+          {
+            echo "## X3 firmware — \`${GITHUB_REF_NAME}\` @ \`${SHORT_SHA}\`"
+            echo
+            grep -E "RAM:\s|Flash:\s" pio-default.log | while read -r line; do echo "- ${line}"; done
+            echo
+            echo "SHA256: \`$(sha256sum "firmware-x3-${SHORT_SHA}.bin" | cut -d' ' -f1)\`"
+            echo
+            echo "Flash with:"
+            echo '```'
+            echo "esptool.py --chip esp32c3 --port /dev/ttyACM0 --baud 921600 write_flash 0x10000 firmware-x3-${SHORT_SHA}.bin"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload X3 firmware
+        uses: actions/upload-artifact@v7
+        with:
+          name: firmware-x3
+          path: firmware-x3-*.bin
+          if-no-files-found: error
+          retention-days: 30

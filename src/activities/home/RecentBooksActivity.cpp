@@ -1,12 +1,14 @@
 #include "RecentBooksActivity.h"
 
 #include <Arduino.h>
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 
 #include "BookActions.h"
 #include "FileBrowserActionActivity.h"
@@ -435,6 +437,23 @@ void RecentBooksActivity::render(RenderLock&&) {
     TouchHeaderBackButton::draw(renderer, uiTarget, header, tr(STR_MENU_RECENT_BOOKS), false);
   } else {
     GUI.drawHeader(renderer, header, tr(STR_MENU_RECENT_BOOKS));
+  }
+
+  // Warm the SD fallback font before the list paints. Book titles are the one
+  // place this screen shows arbitrary scripts, and SD glyphs are only reachable
+  // through the prewarmed page cache, so an unwarmed row renders tofu. The
+  // scope must outlive app.render(): its destructor drops the warmed glyphs.
+  std::optional<FontCacheManager::PrewarmScope> prewarmScope;
+  if (auto* fcm = renderer.getFontCacheManager(); fcm != nullptr && !recentBooks.empty()) {
+    const auto spec = uiScaleSpec();
+    prewarmScope.emplace(fcm->createPrewarmScope());
+    for (const auto& book : recentBooks) {
+      renderer.drawText(spec.bodyFontId, 0, 0, book.title.c_str(), true, EpdFontFamily::BOLD);
+      if (!book.author.empty()) {
+        renderer.drawText(spec.smallFontId, 0, 0, book.author.c_str(), true, EpdFontFamily::REGULAR);
+      }
+    }
+    prewarmScope->endScanAndPrewarm();
   }
 
   uiReady = false;
