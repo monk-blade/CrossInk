@@ -2,12 +2,12 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <atomic>
 #include <string>
 #include <vector>
 
 #include "RssFeedStore.h"
 #include "RssItemCache.h"
+#include "FreshRssSyncRunner.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
@@ -55,11 +55,11 @@ class RssItemListActivity final : public Activity {
   // This makes a stale/offline-preserved snapshot visible without adding a
   // second full-screen pass or delaying the cache-first first paint.
   std::string cacheState;
-  bool backgroundRefresh = false;
   bool listFontSessionActive = false;
   uint8_t savedFontFamily = 0;
   uint8_t savedFontPointSize = 0;
   char savedSdFontFamilyName[32] = "";
+  FreshRssSyncProgress syncProgress;
 
   void checkAndConnectWifi();
   void launchWifiSelection();
@@ -67,7 +67,6 @@ class RssItemListActivity final : public Activity {
   void fetchFeed();
   bool loadFromCache();
   void openSelectedItem();
-  void triggerRefresh();
   bool rebuildVisibleItems();
   void toggleSelectedStar();
   void toggleSelectedQueue();
@@ -81,9 +80,6 @@ class RssItemListActivity final : public Activity {
   bool listHasSubtitle() const;
   bool preventAutoSleep() override { return true; }
 
-  std::atomic<size_t> syncReceived{0};
-  std::atomic<size_t> syncLimit{0};
-  std::atomic<bool> syncProcessingArticle{false};
   unsigned long lastSyncPaintMs = 0;
 
   // Refresh runs on the activity task so cache writes remain atomic and

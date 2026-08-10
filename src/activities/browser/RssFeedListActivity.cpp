@@ -1,7 +1,9 @@
 #include "RssFeedListActivity.h"
 
+#include <Arduino.h>
 #include <GujaratiIntegration.h>
 #include <I18n.h>
+#include <WiFi.h>
 
 #include <algorithm>
 #include <cstring>
@@ -11,12 +13,14 @@
 #include "RssItemStateStore.h"
 #include "SdCardFontSystem.h"
 #include "activities/browser/RssItemListActivity.h"
+#include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
 namespace {
 constexpr const char* DASHBOARD_LABELS[] = {
     "All Articles", "Unread Articles", "Starred Articles", "Reading Queue", "Categories", "Subscriptions"};
+constexpr unsigned long SYNC_PROGRESS_PAINT_MS = 250;
 
 RssFeed makeFreshFeed(const FreshRssNavigationEntry& entry) {
   RssFeed feed;
@@ -31,6 +35,13 @@ RssFeed makeFreshFeed(const FreshRssNavigationEntry& entry) {
   GujaratiIntegration::shapeLongUiString(feed.name);
   return feed;
 }
+
+void disconnectWifi() {
+  if (WiFi.getMode() != WIFI_MODE_NULL) {
+    WiFi.disconnect(false);
+    WiFi.mode(WIFI_OFF);
+  }
+}
 }  // namespace
 
 void RssFeedListActivity::onEnter() {
@@ -41,6 +52,14 @@ void RssFeedListActivity::onEnter() {
   selectorIndex = 0;
   selectedCategoryId.clear();
   selectedCategoryLabel.clear();
+  syncState = SyncState::IDLE;
+  statusMessage.clear();
+  errorMessage.clear();
+  refreshMenuLabel = tr(STR_REFRESH);
+  syncProgress.received.store(0);
+  syncProgress.limit.store(0);
+  syncProgress.processingArticle.store(false);
+  lastSyncPaintMs = 0;
   loadDashboard();
   requestUpdate();
 }
@@ -102,6 +121,13 @@ void RssFeedListActivity::loadDashboard() {
   subscriptions.isFreshRss = true;
   subscriptions.articleCount = subscriptionCount;
   entries.push_back(std::move(subscriptions));
+
+  RssFeed refreshEntry;
+  refreshEntry.name = refreshMenuLabel.empty() ? tr(STR_REFRESH) : refreshMenuLabel;
+  refreshEntry.url = "freshrss";
+  refreshEntry.isFreshRss = true;
+  entries.push_back(std::move(refreshEntry));
+
   for (auto& entry : entries) GujaratiIntegration::shapeLongUiString(entry.name);
   selectorIndex = std::clamp(selectorIndex, 0, std::max(0, static_cast<int>(entries.size()) - 1));
 }
@@ -109,6 +135,7 @@ void RssFeedListActivity::loadDashboard() {
 void RssFeedListActivity::onExit() {
   Activity::onExit();
   restoreReaderFont();
+  if (syncState != SyncState::IDLE) disconnectWifi();
 }
 
 void RssFeedListActivity::activateListFont() {
@@ -180,27 +207,85 @@ void RssFeedListActivity::refreshNavigation() {
   }
 }
 
-void RssFeedListActivity::openAllArticlesForInitialRefresh() {
-  RssFeed feed;
-  feed.name = "All Articles";
-  feed.url = "freshrss";
-  feed.isFreshRss = true;
-  feed.freshFilter = FreshRssFilterKind::All;
-  startActivityForResult(std::make_unique<RssItemListActivity>(renderer, mappedInput, std::move(feed)),
-                         [this](const ActivityResult&) {
-                           refreshNavigation();
-                           requestUpdate();
-                         });
+void RssFeedListActivity::paintSyncProgress(const bool force) {
+  const unsigned long now = millis();
+  if (!force && now - lastSyncPaintMs < SYNC_PROGRESS_PAINT_MS) return;
+  lastSyncPaintMs = now;
+  requestUpdateAndWait();
+}
+
+void RssFeedListActivity::triggerRefresh() {
+  syncProgress.received.store(0);
+  syncProgress.limit.store(0);
+  syncState = SyncState::CHECK_WIFI;
+  statusMessage = tr(STR_CHECKING_WIFI);
+  requestUpdate();
+  checkAndConnectWifi();
+}
+
+void RssFeedListActivity::checkAndConnectWifi() {
+  if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+    syncState = SyncState::LOADING;
+    statusMessage = tr(STR_LOADING);
+    requestUpdate();
+    performSync();
+    return;
+  }
+  launchWifiSelection();
+}
+
+void RssFeedListActivity::launchWifiSelection() {
+  syncState = SyncState::WIFI_SELECTION;
+  requestUpdate();
+  startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+                         [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
+}
+
+void RssFeedListActivity::onWifiSelectionComplete(const bool connected) {
+  if (connected) {
+    syncState = SyncState::LOADING;
+    statusMessage = tr(STR_LOADING);
+    requestUpdate(true);
+    performSync();
+  } else {
+    syncState = SyncState::IDLE;
+    requestUpdate();
+  }
+}
+
+void RssFeedListActivity::performSync() {
+  FreshRssSyncHost host{
+      syncProgress,
+      [this](const char* message) { statusMessage = message; },
+      [this](const bool force) { paintSyncProgress(force); }};
+  std::string error;
+  const bool committed = ::runFreshRssSync(host, error);
+  disconnectWifi();
+  if (!committed) {
+    syncState = FreshRssCache::exists() ? SyncState::IDLE : SyncState::ERROR;
+    if (syncState == SyncState::ERROR) {
+      errorMessage = error.empty() ? tr(STR_FETCH_FEED_FAILED) : error;
+    }
+    requestUpdate();
+    return;
+  }
+  syncState = SyncState::IDLE;
+  refreshNavigation();
+  requestUpdate();
 }
 
 void RssFeedListActivity::openSelectedEntry() {
   if (view == View::DASHBOARD) {
     dashboardAction = static_cast<DashboardAction>(selectorIndex);
+    if (dashboardAction == DashboardAction::REFRESH) {
+      triggerRefresh();
+      return;
+    }
     if (dashboardAction == DashboardAction::CATEGORIES || dashboardAction == DashboardAction::SUBSCRIPTIONS) {
       selectorIndex = 0;
       const bool hasSnapshot = FreshRssCache::exists();
       if (!loadCategories() && !hasSnapshot) {
-        openAllArticlesForInitialRefresh();
+        triggerRefresh();
         return;
       }
       view = View::CATEGORIES;
@@ -246,6 +331,29 @@ std::string RssFeedListActivity::headerText() const {
 }
 
 void RssFeedListActivity::loop() {
+  if (syncState == SyncState::WIFI_SELECTION) return;
+
+  if (syncState == SyncState::ERROR) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      triggerRefresh();
+      return;
+    }
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      syncState = SyncState::IDLE;
+      requestUpdate();
+    }
+    return;
+  }
+
+  if (syncState == SyncState::CHECK_WIFI || syncState == SyncState::LOADING) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      syncState = SyncState::IDLE;
+      disconnectWifi();
+      requestUpdate();
+    }
+    return;
+  }
+
   const int totalItems = static_cast<int>(itemCount());
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
@@ -301,6 +409,7 @@ void RssFeedListActivity::loop() {
 
 void RssFeedListActivity::render(RenderLock&&) {
   renderer.clearScreen();
+  const auto pageHeight = renderer.getScreenHeight();
 
   const auto metrics = UITheme::getInstance().getMetrics();
   const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
@@ -308,28 +417,49 @@ void RssFeedListActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect{screen.x, screen.y + metrics.topPadding, screen.width, metrics.headerHeight},
                  title.c_str());
 
+  if (syncState == SyncState::CHECK_WIFI || syncState == SyncState::LOADING) {
+    const size_t progressTotal = syncProgress.limit.load();
+    const size_t progressCurrent = std::min(syncProgress.received.load(), progressTotal);
+    const int progressY = pageHeight / 2 + 18;
+    const char* visibleStatus =
+        syncProgress.processingArticle.load() ? "Processing article" : statusMessage.c_str();
+    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - (progressTotal > 0 ? 18 : 0), visibleStatus);
+    if (progressTotal > 0) {
+      GUI.drawProgressBar(renderer, Rect{50, progressY, renderer.getScreenWidth() - 100, 20}, progressCurrent,
+                          progressTotal);
+      const std::string progressText = std::to_string(progressCurrent) + " / " + std::to_string(progressTotal);
+      renderer.drawCenteredText(SMALL_FONT_ID, progressY + 28, progressText.c_str());
+    }
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer();
+    return;
+  }
+
+  if (syncState == SyncState::ERROR) {
+    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - 20, tr(STR_ERROR_MSG));
+    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 10, errorMessage.c_str());
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_RETRY), "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer();
+    return;
+  }
+
   const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int contentHeight = screen.height - contentTop - metrics.verticalSpacing;
   const int totalItems = static_cast<int>(itemCount());
   if (totalItems == 0) {
     const char* message = view == View::SUBSCRIPTIONS ? "No feeds with cached articles in this category"
-                                                       : "No cached articles. Open All Articles to refresh.";
+                                                        : "No cached articles. Select Refresh to sync.";
     renderer.drawCenteredText(UI_10_FONT_ID, contentTop + contentHeight / 2, message);
   } else {
-    std::string allNames;
-    for (const auto& entry : entries) {
-      allNames += entry.name;
-      allNames += '\n';
-    }
-    const int listFontId = SETTINGS.getReaderFontId();
-
     GUI.drawList(
         renderer, Rect{screen.x, contentTop, screen.width, contentHeight}, totalItems, selectorIndex,
         [this](const int index) {
           return entries[index].name;
         }, nullptr,
         [this](const int index) {
-          if (view == View::CATEGORIES) return UIIcon::Folder;
+          if (view != View::DASHBOARD) return UIIcon::Folder;
           switch (index) {
             case 0:
               return UIIcon::List;
@@ -343,12 +473,15 @@ void RssFeedListActivity::render(RenderLock&&) {
               return UIIcon::Folder;
             case 5:
               return UIIcon::Rss;
+            case 6:
+              return UIIcon::Transfer;
             default:
               return UIIcon::None;
           }
         },
         [this](const int index) {
-          if (index >= static_cast<int>(entries.size())) return std::string();
+          if (view != View::DASHBOARD || index >= static_cast<int>(entries.size())) return std::string();
+          if (index == static_cast<int>(DashboardAction::REFRESH)) return std::string();
           if (entries[index].articleCount == 0) return std::string();
           const std::string count = std::to_string(entries[index].articleCount);
           return entries[index].unreadCount == entries[index].articleCount

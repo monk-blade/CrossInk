@@ -18,9 +18,8 @@
 
 #include "MappedInputManager.h"
 #include "CrossPointSettings.h"
-#include "FreshRssAccountStore.h"
-#include "FreshRssApiClient.h"
 #include "FreshRssCache.h"
+#include "FreshRssSyncRunner.h"
 #include "RssDateFormatter.h"
 #include "RssItemFilter.h"
 #include "RssItemStateStore.h"
@@ -37,15 +36,8 @@ namespace {
 // One article is converted and written at a time. This preserves the existing
 // hard article bound without retaining all feed bodies on the ESP32 heap.
 constexpr size_t MAX_CACHED_ARTICLE_CHARS = 32 * 1024;
-constexpr int REFRESH_BUTTON_WIDTH = 112;
-constexpr int REFRESH_BUTTON_HEIGHT = 28;
 constexpr unsigned long SYNC_PROGRESS_PAINT_MS = 250;
 constexpr int RSS_DATE_FONT_ID = SMALL_FONT_ID;
-
-Rect refreshButtonRect(const Rect& screen, const ThemeMetrics& metrics) {
-  return Rect{screen.x + screen.width - REFRESH_BUTTON_WIDTH - metrics.contentSidePadding,
-              screen.y + metrics.topPadding + 8, REFRESH_BUTTON_WIDTH, REFRESH_BUTTON_HEIGHT};
-}
 }  // namespace
 
 void RssItemListActivity::onEnter() {
@@ -65,22 +57,15 @@ void RssItemListActivity::onEnter() {
   queueMessageUntil = 0;
   errorMessage.clear();
   cacheState.clear();
-  backgroundRefresh = false;
-  syncReceived.store(0);
-  syncLimit.store(0);
-  syncProcessingArticle.store(false);
+  syncProgress.received.store(0);
+  syncProgress.limit.store(0);
+  syncProgress.processingArticle.store(false);
   lastSyncPaintMs = 0;
   requestUpdate();
 
   if (loadFromCache()) {
-    // Show what we already have instantly — WiFi is opt-in via the Refresh
-    // hint, not a precondition for reading a feed you've already fetched.
     state = ListState::BROWSING;
     requestUpdate();
-    if (feed.isFreshRss && cacheState == "stale") {
-      backgroundRefresh = true;
-      checkAndConnectWifi();
-    }
     return;
   }
 
@@ -315,17 +300,10 @@ void RssItemListActivity::toggleSelectedQueue() {
 
 void RssItemListActivity::checkAndConnectWifi() {
   if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
-    if (!backgroundRefresh) {
-      state = ListState::LOADING;
-      statusMessage = tr(STR_LOADING);
-    }
+    state = ListState::LOADING;
+    statusMessage = tr(STR_LOADING);
     requestUpdate();
     fetchFeed();
-    backgroundRefresh = false;
-    return;
-  }
-  if (backgroundRefresh) {
-    backgroundRefresh = false;
     return;
   }
   launchWifiSelection();
@@ -365,144 +343,16 @@ void RssItemListActivity::fetchFeed() {
   };
 
   if (feed.isFreshRss) {
-    syncReceived.store(0);
-    syncLimit.store(SETTINGS.freshRssArticleLimit);
-    syncProcessingArticle.store(false);
-    lastSyncPaintMs = millis();
-    statusMessage = "Preparing FreshRSS sync";
-    paintSyncProgress(true);
-    FreshRssMetadata metadata;
-    std::string auth;
+    FreshRssSyncHost host{syncProgress,
+                          [this](const char* message) { statusMessage = message; },
+                          [this](const bool force) { paintSyncProgress(force); }};
     std::string error;
-    FreshRssApiClient client(FRESHRSS_ACCOUNT.getAccount());
-    statusMessage = "Loading subscriptions and categories";
-    paintSyncProgress(true);
-    if (!client.fetchMetadata(metadata, auth, error)) {
+    if (!runFreshRssSync(host, error)) {
       disconnectWifi();
-      const bool hasCache = feed.isFreshRss ? FreshRssCache::exists() : !items.empty();
+      const bool hasCache = FreshRssCache::exists();
       state = hasCache ? ListState::BROWSING : ListState::ERROR;
       if (hasCache) cacheState = "refresh failed";
       if (!hasCache) errorMessage = error.empty() ? tr(STR_FETCH_FEED_FAILED) : error;
-      requestUpdate();
-      return;
-    }
-
-    FreshRssSyncCursor previousCursor;
-    const FreshRssAccount account = FRESHRSS_ACCOUNT.getAccount();
-    const uint32_t accountIdentity = freshRssAccountIdentity(account);
-    const bool hasCursor = FreshRssCache::loadSyncCursor(previousCursor);
-    const bool canDelta = hasCursor && previousCursor.accountIdentity == accountIdentity &&
-                          previousCursor.articleLimit == SETTINGS.freshRssArticleLimit;
-
-    auto performSnapshot = [&](const bool delta, FreshRssSyncCursor& nextCursor, bool& deltaUnsupported,
-                               bool& deltaInconsistent) {
-      FreshRssCache::WriteSession writer;
-      if (!writer.begin(metadata, SETTINGS.freshRssArticleLimit, nextCursor)) return false;
-      std::vector<uint32_t> changedKeys;
-      changedKeys.reserve(SETTINGS.freshRssArticleLimit);
-      const FreshRssSyncCursor* cursor = delta ? &previousCursor : nullptr;
-      statusMessage = delta ? "Incremental FreshRSS sync" : "Downloading and caching articles";
-      paintSyncProgress(true);
-      const bool fetched = client.fetchArticles(
-          auth, SETTINGS.freshRssArticleLimit,
-          [this, &writer, &changedKeys, &nextCursor, delta, &deltaInconsistent](FreshRssArticle&& parsed) {
-            if (delta && (parsed.modifiedMsec == 0 || parsed.modifiedMsec <= nextCursor.modifiedMsec)) {
-              deltaInconsistent = true;
-            }
-            syncProcessingArticle.store(true);
-            paintSyncProgress(syncReceived.load() == 0);
-            FreshRssCachedArticle item;
-            item.id = parsed.id;
-            item.key = RssItemStateStore::itemKey("freshrss:" + parsed.id, parsed.link, parsed.title);
-            item.modifiedMsec = parsed.modifiedMsec;
-            item.title = std::move(parsed.title);
-            item.author = std::move(parsed.author);
-            item.origin = std::move(parsed.origin);
-            item.originUrl = std::move(parsed.originUrl);
-            item.streamId = std::move(parsed.streamId);
-            item.subscriptionId = item.streamId;
-            item.link = std::move(parsed.link);
-            item.date = std::move(parsed.date);
-            item.categoryIds = std::move(parsed.categoryIds);
-            const std::string& html = !parsed.contentHtml.empty() ? parsed.contentHtml : parsed.summaryHtml;
-            item.body = HtmlRichText::convert(html, MAX_CACHED_ARTICLE_CHARS,
-                                              [this](const size_t) { paintSyncProgress(); });
-            std::string().swap(parsed.contentHtml);
-            std::string().swap(parsed.summaryHtml);
-            item.bodyTruncated = parsed.bodyTruncated;
-            GujaratiIntegration::shapeLongUiString(item.title);
-            GujaratiIntegration::shapeLongUiString(item.author);
-            GujaratiIntegration::shapeLongUiString(item.origin);
-            size_t shapedWordCount = 0;
-            for (auto& paragraph : item.body) {
-              for (auto& word : paragraph.words) {
-                GujaratiIntegration::shapeSanitizedWord(word.text);
-                if ((++shapedWordCount & 31u) == 0) paintSyncProgress();
-              }
-            }
-            const bool appended = writer.append(item);
-            if (appended) {
-              changedKeys.push_back(item.key);
-              nextCursor.modifiedMsec = std::max(nextCursor.modifiedMsec, item.modifiedMsec);
-            }
-            syncProcessingArticle.store(false);
-            return appended;
-          },
-          error,
-          [this](const size_t received, const size_t limit) {
-            syncReceived.store(received);
-            syncLimit.store(limit);
-            paintSyncProgress(received == 0 || received == limit);
-          },
-          cursor, &deltaUnsupported);
-      if (!fetched || deltaInconsistent) {
-        writer.abort();
-        return false;
-      }
-      if (delta && !writer.copyUnchangedFromCurrent(changedKeys)) {
-        writer.abort();
-        return false;
-      }
-      statusMessage = "Committing article cache";
-      paintSyncProgress(true);
-      writer.setSyncCursor(nextCursor);
-      return writer.commit();
-    };
-
-    FreshRssSyncCursor nextCursor;
-    nextCursor.accountIdentity = accountIdentity;
-    nextCursor.articleLimit = SETTINGS.freshRssArticleLimit;
-    nextCursor.generation = hasCursor ? previousCursor.generation + 1 : 1;
-    nextCursor.modifiedMsec = canDelta ? previousCursor.modifiedMsec : 0;
-    bool deltaUnsupported = false;
-    bool deltaInconsistent = false;
-    bool committed = false;
-    if (canDelta) {
-      committed = performSnapshot(true, nextCursor, deltaUnsupported, deltaInconsistent);
-      if (!committed && (deltaUnsupported || deltaInconsistent)) {
-        statusMessage = "Rebuilding FreshRSS cache";
-        paintSyncProgress(true);
-        nextCursor.modifiedMsec = 0;
-        deltaUnsupported = false;
-        deltaInconsistent = false;
-        committed = performSnapshot(false, nextCursor, deltaUnsupported, deltaInconsistent);
-      }
-    } else {
-      committed = performSnapshot(false, nextCursor, deltaUnsupported, deltaInconsistent);
-    }
-    if (!committed) {
-      disconnectWifi();
-      const bool hasCache = feed.isFreshRss ? FreshRssCache::exists() : !items.empty();
-      state = hasCache ? ListState::BROWSING : ListState::ERROR;
-      if (hasCache) cacheState = "refresh failed";
-      if (!hasCache) errorMessage = error.empty() ? tr(STR_FETCH_FEED_FAILED) : error;
-      requestUpdate();
-      return;
-    }
-    if (!FreshRssCache::exists()) {
-      disconnectWifi();
-      state = ListState::ERROR;
-      errorMessage = tr(STR_PARSE_FEED_FAILED);
       requestUpdate();
       return;
     }
@@ -594,19 +444,6 @@ void RssItemListActivity::fetchFeed() {
   requestUpdate();
 }
 
-void RssItemListActivity::triggerRefresh() {
-  syncReceived.store(0);
-  syncLimit.store(0);
-  if (state == ListState::BROWSING) {
-    backgroundRefresh = true;
-  } else {
-    state = ListState::CHECK_WIFI;
-    statusMessage = tr(STR_CHECKING_WIFI);
-  }
-  requestUpdate();
-  checkAndConnectWifi();
-}
-
 void RssItemListActivity::openSelectedItem() {
   const int itemIndex = selectedItemIndex();
   if (itemIndex < 0) return;
@@ -684,22 +521,10 @@ void RssItemListActivity::loop() {
     finish();
     return;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Left) &&
-      SETTINGS.rssRefreshButton == CrossPointSettings::RSS_REFRESH_LEFT) {
-    // Manual refresh — always available, whether currently offline or just
-    // checking for new items after a live fetch.
-    triggerRefresh();
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right) &&
+      SETTINGS.rssStarAction == CrossPointSettings::RSS_STAR_RIGHT_BUTTON) {
+    toggleSelectedStar();
     return;
-  }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
-    if (SETTINGS.rssStarAction == CrossPointSettings::RSS_STAR_RIGHT_BUTTON) {
-      toggleSelectedStar();
-      return;
-    }
-    if (SETTINGS.rssRefreshButton == CrossPointSettings::RSS_REFRESH_RIGHT) {
-      triggerRefresh();
-      return;
-    }
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     openSelectedItem();
@@ -711,40 +536,6 @@ void RssItemListActivity::loop() {
 
   const bool showSubtitle = listHasSubtitle();
   const int pageItems = UITheme::getInstance().getNumberOfItemsPerPage(renderer, true, false, true, showSubtitle);
-  const auto metrics = UITheme::getInstance().getMetrics();
-  const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int contentHeight = screen.height - contentTop - metrics.verticalSpacing;
-
-  // A tap on the visible header action is a direct refresh. For taps outside
-  // the header, reproduce the normal list activation here because the input
-  // manager's tap event is intentionally consumable only once per frame.
-  int tapX = 0;
-  int tapY = 0;
-  if (mappedInput.wasScreenTapped(tapX, tapY)) {
-    const Rect refreshRect = refreshButtonRect(screen, metrics);
-    if (tapX >= refreshRect.x && tapX < refreshRect.x + refreshRect.width && tapY >= refreshRect.y &&
-        tapY < refreshRect.y + refreshRect.height) {
-      triggerRefresh();
-      return;
-    }
-    if (tapY >= contentTop && tapY < contentTop + contentHeight && totalItems > 0) {
-      const int rowStep = UITheme::getInstance().getTheme().getListRowStep(showSubtitle);
-      const int pageItems = std::max(1, UITheme::getInstance().getNumberOfItemsPerPage(renderer, true, false, true,
-                                                                                           showSubtitle));
-      const int pageStart = (selectorIndex / pageItems) * pageItems;
-      const int row = rowStep > 0 ? (tapY - contentTop) / rowStep : 0;
-      const int tappedIndex = pageStart + row;
-      if (tappedIndex >= 0 && tappedIndex < totalItems) {
-        selectorIndex = tappedIndex;
-        openSelectedItem();
-      }
-    }
-    return;
-  }
-
-  (void)contentTop;
-  (void)contentHeight;
 
   buttonNavigator.onNextRelease([this, totalItems] {
     selectorIndex = ButtonNavigator::nextIndex(selectorIndex, totalItems);
@@ -770,37 +561,24 @@ void RssItemListActivity::render(RenderLock&&) {
 
   const auto metrics = UITheme::getInstance().getMetrics();
   const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  const Rect refreshRect = refreshButtonRect(screen, metrics);
   std::string articleCount;
   std::string headerSubtitleText;
   const char* headerSubtitle = nullptr;
   if (state == ListState::BROWSING) {
     articleCount = std::to_string(visibleCount());
     headerSubtitleText = articleCount;
-    if (backgroundRefresh && syncLimit.load() > 0) {
-      headerSubtitleText += " · syncing";
-    } else if (!cacheState.empty()) {
-      headerSubtitleText += " · " + cacheState;
-    }
+    if (!cacheState.empty()) headerSubtitleText += " · " + cacheState;
     headerSubtitle = headerSubtitleText.c_str();
   }
   GUI.drawHeader(renderer, Rect{screen.x, screen.y + metrics.topPadding, screen.width, metrics.headerHeight},
                  feed.name.c_str(), headerSubtitle);
 
-  if (state == ListState::BROWSING) {
-    renderer.drawRect(refreshRect.x, refreshRect.y, refreshRect.width, refreshRect.height);
-    const std::string refreshLabel = tr(STR_REFRESH);
-    const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, refreshLabel.c_str());
-    renderer.drawText(SMALL_FONT_ID, refreshRect.x + (refreshRect.width - labelWidth) / 2,
-                      refreshRect.y + (refreshRect.height - renderer.getTextHeight(SMALL_FONT_ID)) / 2,
-                      refreshLabel.c_str());
-  }
-
-  if ((state == ListState::CHECK_WIFI || state == ListState::LOADING) && !backgroundRefresh) {
-    const size_t progressTotal = syncLimit.load();
-    const size_t progressCurrent = std::min(syncReceived.load(), progressTotal);
+  if (state == ListState::CHECK_WIFI || state == ListState::LOADING) {
+    const size_t progressTotal = syncProgress.limit.load();
+    const size_t progressCurrent = std::min(syncProgress.received.load(), progressTotal);
     const int progressY = pageHeight / 2 + 18;
-    const char* visibleStatus = syncProcessingArticle.load() ? "Processing article" : statusMessage.c_str();
+    const char* visibleStatus =
+        syncProgress.processingArticle.load() ? "Processing article" : statusMessage.c_str();
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - (progressTotal > 0 ? 18 : 0), visibleStatus);
     if (progressTotal > 0) {
       GUI.drawProgressBar(renderer, Rect{50, progressY, renderer.getScreenWidth() - 100, 20}, progressCurrent,
@@ -934,10 +712,7 @@ void RssItemListActivity::render(RenderLock&&) {
   }
 
   if (SETTINGS.rssShowButtonHints) {
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_OPEN),
-                                              SETTINGS.rssRefreshButton == CrossPointSettings::RSS_REFRESH_DISABLED
-                                                  ? ""
-                                                  : tr(STR_REFRESH),
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_OPEN), "",
                                               SETTINGS.rssStarAction == CrossPointSettings::RSS_STAR_RIGHT_BUTTON
                                                   ? tr(STR_RSS_STAR)
                                                   : "");
