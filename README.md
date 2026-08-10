@@ -1,4 +1,6 @@
 > **This is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)** with a focus on improved fonts and minimal reading stats.
+>
+> **This build adds two features on top of CrossInk:** [Gujarati script rendering](./docs/gujarati-rendering.md) and a [FreshRSS-backed RSS reader](./docs/rss-reader.md). See [This build's additions](#this-builds-additions).
 
 ### Supported Devices
 
@@ -50,6 +52,71 @@ My goal with this fork was to maintain the core Crosspoint firmware while integr
 - Added customizable Auto Page Turn Interval (anything between 5-120 seconds).
 - Added ability to view Recent Books as a 3x3 grid view.
 - To view a more detailed list for each version, visit the [releases](https://github.com/uxjulia/CrossInk/releases) page to read release notes.
+
+---
+
+## This build's additions
+
+Everything above comes from CrossInk. The two features below exist only in this
+build and are not part of upstream CrossPoint or CrossInk.
+
+### Gujarati rendering
+
+Gujarati EPUBs render as properly shaped text instead of tofu boxes. Shaping runs
+at layout time (in `ParsedText::addWord`) and the result is cached in `section.bin`,
+so re-reads pay no shaping cost.
+
+- Conjunct ligatures (`ક્ષ`, `સ્ત્ર`, …) via PUA glyphs embedded in the SD-card font.
+- Pre-base `િ` matra reordered into visual order.
+- Reph (`ર+્`), subjoined Ra (`ટ્ર`), anusvara (`ં`), and chandrabindu (`ઁ`) drawn as
+  zero-advance overlays by `GfxRenderer`.
+- Bundled **Rasa** family (the default Gujarati reader font) plus **Noto Serif Gujarati**,
+  both built with matching PUA conjuncts.
+- Home and Recent Books screens prewarm the SD fallback font, so book titles and
+  authors in Gujarati (or CJK) render correctly instead of falling back to placeholders.
+
+The shaper is self-contained in [`lib/GujaratiShaper/`](./lib/GujaratiShaper/); upstream
+touch points are a single line in `ParsedText` plus ~60 lines in `GfxRenderer`.
+
+Install the font via Settings → System → Manage Fonts, then pick it under
+Settings → Reader → Font Family. Clear `.crosspoint/` on the SD card after upgrading,
+since the section cache format changed.
+
+See [Gujarati rendering](./docs/gujarati-rendering.md) for the full architecture,
+porting notes, and the font-generation scripts.
+
+### RSS reader (FreshRSS)
+
+Home → **RSS Feeds** opens a cache-first reader backed by a self-hosted
+[FreshRSS](https://freshrss.org/) instance via its read-only Google Reader API.
+
+- Dashboard shortcuts: All Articles, Unread Articles, Starred Articles, Reading Queue,
+  Categories, and Subscriptions, plus a **Refresh** row that triggers the only network
+  operation.
+- Refresh authenticates once, fetches subscriptions/tags/reading-list, and writes a
+  snapshot to the SD card. Later refreshes send a modified-since cursor and merge only
+  changed entries; malformed or inconsistent delta responses rebuild the full snapshot.
+- Browsing is cache-only. WiFi connects only while a refresh is running and is
+  disconnected in every activity's `onExit()`, the same pattern the OPDS browser uses.
+  If a refresh fails, the existing cache is still readable.
+- Articles open in a paginated view with real formatting: centered bold title, first-line
+  paragraph indents, bold/italic and alignment preserved from the source HTML, justified
+  body text, and the same half/fast e-ink refresh cycling as the book reader.
+- A device-local **Reading Queue** (read-later, 256 items max) is stored in
+  `/.crosspoint/rss/state.bin` and never synced back to FreshRSS.
+- Reader → **RSS Settings** is separate from EPUB/TXT settings: list density, date display,
+  unread filter, an RSS-only font profile (family, size, spacing, indent, alignment,
+  margins), button/mark-read behavior, and cache stats with a clear action.
+- Feed list text defaults to **IBM Plex Sans Condensed** at 12 pt, whose CPFont embeds Rasa
+  glyphs (including shaped Gujarati PUA glyphs), so Gujarati feed titles render without a
+  second font load.
+
+Note that upstream's [`SCOPE.md`](./SCOPE.md) lists RSS readers as out of scope for battery
+and memory reasons; this implementation stays inside those constraints but is a fork-only
+feature by design.
+
+See [RSS reader](./docs/rss-reader.md) for setup, FreshRSS configuration, the cache format,
+and icon attribution.
 
 ---
 
@@ -123,6 +190,8 @@ See [Installation](./docs/installation.md) for step-by-step flashing and revert 
 - [User Guide](./docs/user-guide.md)
 - [Installation](./docs/installation.md)
 - [SD Card Fonts](./docs/sd-card-fonts.md)
+- [Gujarati rendering](./docs/gujarati-rendering.md)
+- [RSS reader](./docs/rss-reader.md)
 - [Reader Features](./docs/reader-features.md)
 - [Dictionary](./docs/dictionary.md)
 - [Controls](./docs/controls.md)
@@ -178,6 +247,8 @@ See [Testing and Debugging](./docs/development/testing-debugging.md) for serial 
 
 - `src/` - app orchestration, settings/state, and activity implementations (home, reader, settings, network, boot/sleep)
 - `lib/` - supporting libraries: EPUB parsing/layout, fonts, i18n, filesystem helpers, HAL wrappers, and more
+- `lib/GujaratiShaper/` - self-contained Gujarati shaping module (conjuncts, matra reorder, overlay marks)
+- `lib/RssParser/` - RSS/Atom parsing and HTML-to-rich-text conversion for the FreshRSS reader
 - `freeink-sdk/` - hardware SDK submodule for display, input, storage, and battery (docs: https://freeink.org/docs)
 - `web/` - web portal sources (`templates/`, `pages/`, `assets/`); compiled by `scripts/build_web.py` into `src/network/html/*.generated.h`
 - `docs/` - user and developer documentation, published via the `site/` Astro site
