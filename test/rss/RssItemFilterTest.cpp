@@ -3,7 +3,6 @@
 #include <array>
 #include <vector>
 
-#include "src/RssCachePolicy.h"
 #include "src/RssItemFilter.h"
 
 TEST(RssItemFilter, KeepsOnlyUnreadPositionsWithoutCopyingItems) {
@@ -24,16 +23,4 @@ TEST(RssItemFilter, SupportsOneThousandArticlePositions) {
   ASSERT_EQ(indexes.size(), 1000U);
   EXPECT_EQ(indexes.front(), 0U);
   EXPECT_EQ(indexes.back(), 999U);
-}
-
-TEST(RssCachePolicy, EvictsOldestUnprotectedEntriesOnly) {
-  const std::vector<RssCachePolicy::Entry> entries = {
-      {10, false}, {20, true}, {30, false}, {40, false}, {50, true}};
-  const auto evictions = RssCachePolicy::selectEvictions(entries, 1);
-  EXPECT_EQ(evictions, (std::vector<size_t>{0, 2}));
-}
-
-TEST(RssCachePolicy, ProtectedEntriesCanExceedNormalLimit) {
-  const std::vector<RssCachePolicy::Entry> entries = {{10, true}, {20, true}};
-  EXPECT_TRUE(RssCachePolicy::selectEvictions(entries, 0).empty());
 }

@@ -283,3 +283,81 @@ TEST(GujaratiShaper, CorpusDard) {
   ASSERT_GE(cps.size(), 2u);
   EXPECT_EQ(cps.back(), GujaratiShaper::REPH_GLYPH);
 }
+
+// Regression test: shape() used to decode at most MAX_WORD_CPS (128)
+// codepoints and silently drop everything past that instead of continuing.
+// A long whole-string caller (e.g. GujaratiIntegration::shapeUiString on an
+// unusually long title) must not lose text past the 128th codepoint.
+TEST(GujaratiShaper, DoesNotDropCodepointsBeyondShapingWindow) {
+  constexpr int kRepeats = 200;  // > MAX_WORD_CPS (128)
+  std::string word;
+  for (int i = 0; i < kRepeats; ++i) {
+    appendCp(word, 0x0A95);  // standalone "ka" — no virama/matra, so no rule
+                             // touches it and every copy should pass through
+                             // unchanged regardless of chunk boundaries.
+  }
+  char buf[kRepeats * 3 + 16];
+  const size_t len = GujaratiShaper::shape(word.data(), word.size(), buf, sizeof(buf));
+  const auto cps = decodeCps(std::string(buf, len));
+  ASSERT_EQ(cps.size(), static_cast<size_t>(kRepeats));
+  for (const uint32_t cp : cps) EXPECT_EQ(cp, 0x0A95u);
+}
+
+// Regression test: U+0AC0 (ii-matra) is post-base, like U+0ABE (aa-matra) —
+// only U+0ABF (i-matra) is pre-base. It used to be excluded from the reph
+// cluster on the mistaken assumption that it was pre-base too, which stopped
+// the reph target one codepoint short whenever a word ended in ii-matra.
+TEST(GujaratiShaper, RephClusterIncludesPostBaseIiMatra) {
+  std::string word;
+  appendCp(word, 0x0AB5);  // va
+  appendCp(word, 0x0ABE);  // aa
+  appendCp(word, 0x0AB0);  // ra
+  appendCp(word, 0x0ACD);  // virama
+  appendCp(word, 0x0AA4);  // ta
+  appendCp(word, 0x0AC0);  // ii matra (post-base)
+  auto cps = decodeCps(shapeStr(word));
+  ASSERT_EQ(cps.size(), 5u);
+  EXPECT_EQ(cps[0], 0x0AB5u);
+  EXPECT_EQ(cps[1], 0x0ABEu);
+  EXPECT_EQ(cps[2], 0x0AA4u);
+  EXPECT_EQ(cps[3], 0x0AC0u);
+  EXPECT_EQ(cps[4], GujaratiShaper::REPH_GLYPH);
+}
+
+// Regression test: U+0AF9 GUJARATI LETTER ZHA sits outside the contiguous
+// 0x0A95-0x0AB9 consonant block but the shaping tables include rules keyed on
+// it. It used to be invisible to isGujaratiConsonant(), so it could never be
+// a reph base even though ra+virama+zha is exactly the reph pattern.
+TEST(GujaratiShaper, RephFormsBeforeZhaConsonant) {
+  std::string word;
+  appendCp(word, 0x0AB0);  // ra
+  appendCp(word, 0x0ACD);  // virama
+  appendCp(word, 0x0AF9);  // zha
+  auto cps = decodeCps(shapeStr(word));
+  ASSERT_EQ(cps.size(), 2u);
+  EXPECT_EQ(cps[0], 0x0AF9u);
+  EXPECT_EQ(cps[1], GujaratiShaper::REPH_GLYPH);
+}
+
+// A ka+virama pair near the end of a long string (past the first shaping
+// window) must still shape to its half-form — regression coverage for the
+// chunk boundary landing well clear of the interesting text, not just for
+// raw pass-through codepoints. Mirrors the KaVirama test's expectations.
+TEST(GujaratiShaper, ShapesHalfFormPastFirstShapingWindow) {
+  std::string word;
+  for (int i = 0; i < 150; ++i) {
+    appendCp(word, 0x0A96);  // padding: 150 standalone "kha" (> MAX_WORD_CPS),
+                             // distinct from ka/tha below so the tail is unambiguous
+  }
+  appendCp(word, 0x0A95);  // ka
+  appendCp(word, 0x0ACD);  // virama  -> ka+virama half-form (see KaVirama)
+  appendCp(word, 0x0AA5);  // tha, unaffected (no rule chains a half-form + consonant)
+  char buf[1024];
+  const size_t len = GujaratiShaper::shape(word.data(), word.size(), buf, sizeof(buf));
+  const auto cps = decodeCps(std::string(buf, len));
+  ASSERT_EQ(cps.size(), 152u);  // 150 padding + [half-ka, tha]
+  for (size_t i = 0; i < 150; ++i) EXPECT_EQ(cps[i], 0x0A96u) << "padding index " << i;
+  EXPECT_GE(cps[150], 0xE000u);
+  EXPECT_LE(cps[150], 0xF8FFu);
+  EXPECT_EQ(cps[151], 0x0AA5u);
+}

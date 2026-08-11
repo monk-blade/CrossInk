@@ -5,6 +5,9 @@
 #include <GujaratiIntegration.h>
 #include <I18n.h>
 
+#include <optional>
+#include <string>
+
 #include "MappedInputManager.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
@@ -182,6 +185,13 @@ void XtcReaderChapterSelectionActivity::render(RenderLock&&) {
     GUI.drawHeader(renderer, header, tr(STR_SELECT_CHAPTER), nullptr, true);
   }
   uiReady = false;
+  // The prewarm scope must stay alive until after app.render() below draws the
+  // real, positioned rows: its destructor clears the SD font's prewarmed glyph
+  // cache (see FontCacheManager::PrewarmScope), so ending the scope here would
+  // discard the batch-loaded glyphs before app.render() ever draws them,
+  // falling back to the small on-demand overflow cache and producing tofu for
+  // shaped Gujarati chapter titles.
+  std::optional<FontCacheManager::PrewarmScope> prewarmScope;
   if (xtc) {
     const int fontId = uiScaleSpec().bodyFontId;
     std::string prewarmText;
@@ -192,9 +202,9 @@ void XtcReaderChapterSelectionActivity::render(RenderLock&&) {
       prewarmText += '\n';
     }
     if (auto* fcm = renderer.getFontCacheManager(); fcm && !prewarmText.empty()) {
-      auto scope = fcm->createPrewarmScope();
+      prewarmScope.emplace(fcm->createPrewarmScope());
       renderer.drawText(fontId, 0, 0, prewarmText.c_str(), true);
-      scope.endScanAndPrewarm();
+      prewarmScope->endScanAndPrewarm();
     }
   }
   app.render();

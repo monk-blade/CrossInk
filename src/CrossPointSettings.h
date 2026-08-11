@@ -189,12 +189,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   enum RSS_LIST_FILTER { RSS_ALL_ITEMS = 0, RSS_UNREAD_ONLY = 1, RSS_LIST_FILTER_COUNT };
   enum RSS_LIST_DENSITY { RSS_COMPACT_LIST = 0, RSS_COMFORTABLE_LIST = 1, RSS_LIST_DENSITY_COUNT };
   enum RSS_DATE_DISPLAY { RSS_HUMAN_DATE = 0, RSS_COMPACT_DATE = 1, RSS_HIDE_DATE = 2, RSS_DATE_DISPLAY_COUNT };
-  enum RSS_REFRESH_BUTTON {
-    RSS_REFRESH_LEFT = 0,
-    RSS_REFRESH_RIGHT = 1,
-    RSS_REFRESH_DISABLED = 2,
-    RSS_REFRESH_BUTTON_COUNT
-  };
   enum RSS_MARK_READ_TIMING {
     RSS_MARK_READ_ON_OPEN = 0,
     RSS_MARK_READ_ON_LAST_PAGE = 1,
@@ -211,9 +205,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     RSS_STAR_LONG_OPEN = 2,
     RSS_STAR_ACTION_COUNT
   };
-  enum RSS_CACHE_MODE { RSS_CACHE_AUTOMATIC = 0, RSS_CACHE_MANUAL = 1, RSS_CACHE_MODE_COUNT };
-  static constexpr uint8_t RSS_DEFAULT_MAX_FULL_BODIES = 8;
-
   // Auto-sleep timeout options (in minutes)
   enum SLEEP_TIMEOUT {
     SLEEP_1_MIN = 0,
@@ -457,14 +448,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t rssListFontFamily = NOTOSERIF;
   uint8_t rssListFontPointSize = 12;
   char rssListSdFontFamilyName[32] = "IBMPlexSansCondensed";
-  uint8_t rssRefreshButton = RSS_REFRESH_LEFT;
   uint8_t rssMarkReadTiming = RSS_MARK_READ_ON_OPEN;
   uint8_t rssArticleEndAction = RSS_RETURN_TO_LIST;
   uint8_t rssShowButtonHints = 1;
   uint8_t rssStarAction = RSS_STAR_RIGHT_BUTTON;
   uint16_t freshRssArticleLimit = 200;
-  uint8_t rssCacheMode = RSS_CACHE_AUTOMATIC;
-  uint8_t rssMaxFullBodies = RSS_DEFAULT_MAX_FULL_BODIES;
   // Auto-sleep timeout setting (default 10 minutes). Legacy sleepTimeout enum values are migration-only.
   uint8_t sleepTimeoutMinutes = 10;
   // E-ink refresh frequency (default 15 pages)

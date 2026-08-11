@@ -135,7 +135,11 @@ bool loadKeys(FreshRssFilterKind kind, const std::string& id, std::vector<uint32
 bool loadIndex(FreshRssFilterKind kind, const std::string& id, std::vector<CachedRssItem>& outItems);
 bool loadItemsByKeys(const std::vector<uint32_t>& keys, size_t offset, size_t count,
                      std::vector<CachedRssItem>& outItems);
-bool loadItemBodyByOffset(uint32_t recordOffset, RichText& outBody, bool& complete);
+// `key` must match the record found at `recordOffset` — the offset alone is
+// not a safe cache key: a re-commit (delta sync, eviction) can reuse the same
+// byte offset for a different article, and without this check a stale
+// `cacheOffset` held by the UI would silently open the wrong article.
+bool loadItemBodyByOffset(uint32_t recordOffset, uint32_t key, RichText& outBody, bool& complete);
 bool loadItemBody(uint32_t key, RichText& outBody, bool& complete);
 // Builds the home navigation and counts every matching entry in one snapshot
 // scan. The optional read predicate lets the caller populate local unread

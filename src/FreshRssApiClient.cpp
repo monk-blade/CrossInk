@@ -28,13 +28,33 @@ constexpr size_t MAX_ID_CHARS = 256;
 constexpr size_t MAX_LABEL_CHARS = 256;
 constexpr size_t MAX_ARTICLE_BODY_BYTES = 32 * 1024;
 
-bool appendBounded(std::string& target, const char* value, const size_t len, const size_t max, bool& truncated) {
-  if (target.size() > max || len > max - target.size()) {
-    truncated = true;
+// Appends up to `max - target.size()` bytes of `value`, truncating the tail
+// instead of rejecting the whole append when it would exceed the cap. A field
+// that runs past this cosmetic size limit still ends up non-empty, so it
+// can't trip a "required field is empty" check purely from being long — only
+// a genuinely absent field (the server never sent the key at all) should fail
+// record validation. Returns false, with `wasTruncated` set, when some input
+// bytes were dropped.
+bool appendBounded(std::string& target, const char* value, const size_t len, const size_t max, bool& wasTruncated) {
+  if (target.size() >= max) {
+    wasTruncated = true;
     return false;
   }
-  target.append(value, len);
+  const size_t available = max - target.size();
+  const size_t take = std::min(len, available);
+  target.append(value, take);
+  if (take < len) {
+    wasTruncated = true;
+    return false;
+  }
   return true;
+}
+
+// Convenience overload for the common case where the caller doesn't need to
+// react to truncation of this particular field.
+bool appendBounded(std::string& target, const char* value, const size_t len, const size_t max) {
+  bool wasTruncated = false;
+  return appendBounded(target, value, len, max, wasTruncated);
 }
 
 bool parseCrawlTimeMsec(const char* value, const size_t len, uint64_t& millisOut, std::string& dateOut) {
@@ -177,20 +197,23 @@ void FreshRssJsonParser::stringChunk(const char* value, const size_t len, const 
   }
 
   if (document == Document::Subscriptions && subscriptionLevel != 0) {
-    if (currentKey == "id" && !categoryArray) appendBounded(subscription.id, value, len, MAX_ID_CHARS, valid);
-    else if (currentKey == "title" && !categoryArray) appendBounded(subscription.title, value, len, MAX_LABEL_CHARS, valid);
-    else if (currentKey == "htmlUrl" && !categoryArray) appendBounded(subscription.htmlUrl, value, len, MAX_ID_CHARS, valid);
+    if (currentKey == "id" && !categoryArray) appendBounded(subscription.id, value, len, MAX_ID_CHARS);
+    else if (currentKey == "title" && !categoryArray) appendBounded(subscription.title, value, len, MAX_LABEL_CHARS);
+    else if (currentKey == "htmlUrl" && !categoryArray) appendBounded(subscription.htmlUrl, value, len, MAX_ID_CHARS);
     else if (currentKey == "id" && categoryArray && subscription.categoryIds.size() < MAX_CATEGORIES_PER_ITEM) {
       std::string category(value, len);
       if (category.size() <= MAX_ID_CHARS) subscription.categoryIds.push_back(std::move(category));
     }
+    // A missing id (server never sent the key at all) makes the subscription
+    // unusable as a cache key; an id merely longer than MAX_ID_CHARS is kept
+    // truncated by appendBounded above, so it never reaches this check empty.
     if (final && subscription.id.empty()) fail();
     return;
   }
 
   if (document == Document::Tags && tagLevel != 0) {
-    if (currentKey == "id") appendBounded(tag.id, value, len, MAX_ID_CHARS, valid);
-    else if (currentKey == "label") appendBounded(tag.label, value, len, MAX_LABEL_CHARS, valid);
+    if (currentKey == "id") appendBounded(tag.id, value, len, MAX_ID_CHARS);
+    else if (currentKey == "label") appendBounded(tag.label, value, len, MAX_LABEL_CHARS);
     if (final && tag.id.empty()) fail();
     return;
   }
@@ -201,27 +224,32 @@ void FreshRssJsonParser::stringChunk(const char* value, const size_t len, const 
     return;
   }
   if (currentKey == "id" && !categoryArray && originLevel == 0 && canonicalLevel == 0 && alternateLevel == 0)
-    appendBounded(article.id, value, len, MAX_ID_CHARS, valid);
-  else if (currentKey == "title" && originLevel == 0) appendBounded(article.title, value, len, MAX_LABEL_CHARS, valid);
+    appendBounded(article.id, value, len, MAX_ID_CHARS);
+  else if (currentKey == "title" && originLevel == 0) appendBounded(article.title, value, len, MAX_LABEL_CHARS);
   else if ((currentKey == "name" || currentKey == "title") && originLevel != 0)
-    appendBounded(article.origin, value, len, MAX_LABEL_CHARS, valid);
-  else if (currentKey == "htmlUrl" && originLevel != 0) appendBounded(article.originUrl, value, len, MAX_ID_CHARS, valid);
-  else if (currentKey == "streamId" && originLevel != 0) appendBounded(article.streamId, value, len, MAX_ID_CHARS, valid);
-  else if (currentKey == "href" && canonicalLevel != 0) appendBounded(canonicalLink, value, len, MAX_ID_CHARS, valid);
-  else if (currentKey == "href" && alternateLevel != 0) appendBounded(alternateLink, value, len, MAX_ID_CHARS, valid);
-  else if (currentKey == "href" && originLevel == 0) appendBounded(alternateLink, value, len, MAX_ID_CHARS, valid);
+    appendBounded(article.origin, value, len, MAX_LABEL_CHARS);
+  else if (currentKey == "htmlUrl" && originLevel != 0) appendBounded(article.originUrl, value, len, MAX_ID_CHARS);
+  else if (currentKey == "streamId" && originLevel != 0) appendBounded(article.streamId, value, len, MAX_ID_CHARS);
+  else if (currentKey == "href" && canonicalLevel != 0) appendBounded(canonicalLink, value, len, MAX_ID_CHARS);
+  else if (currentKey == "href" && alternateLevel != 0) appendBounded(alternateLink, value, len, MAX_ID_CHARS);
+  else if (currentKey == "href" && originLevel == 0) appendBounded(alternateLink, value, len, MAX_ID_CHARS);
   else if (currentKey == "id" && categoryArray && article.categoryIds.size() < MAX_CATEGORIES_PER_ITEM) {
-    if (len > MAX_ID_CHARS) fail();
-    else article.categoryIds.emplace_back(value, len);
+    // A single over-long category id is dropped, not treated as a whole-page
+    // parse failure — the article itself still has a usable id.
+    std::string category(value, std::min(len, MAX_ID_CHARS));
+    article.categoryIds.push_back(std::move(category));
   }
-  else if (currentKey == "author" && originLevel == 0) appendBounded(article.author, value, len, MAX_LABEL_CHARS, valid);
+  else if (currentKey == "author" && originLevel == 0) appendBounded(article.author, value, len, MAX_LABEL_CHARS);
   else if (currentKey == "name" && originLevel == 0 && article.author.empty())
-    appendBounded(article.author, value, len, MAX_LABEL_CHARS, valid);
+    appendBounded(article.author, value, len, MAX_LABEL_CHARS);
   else if (currentKey == "crawlTimeMsec" && originLevel == 0 && canonicalLevel == 0 && alternateLevel == 0) {
-    if (!appendBounded(crawlTimeText, value, len, 31, valid)) return;
+    if (!appendBounded(crawlTimeText, value, len, 31)) return;
     if (final && !parseCrawlTimeMsec(crawlTimeText.data(), crawlTimeText.size(), article.modifiedMsec, article.date))
-      fail();
+      LOG_ERR("FRSS", "article %s has an unparseable crawlTimeMsec", article.id.c_str());
   }
+  // A missing id (server never sent the key at all) makes the article
+  // unusable as a cache key; an id merely longer than MAX_ID_CHARS is kept
+  // truncated by appendBounded above, so it never reaches this check empty.
   if (final && currentKey == "id" && article.id.empty()) fail();
 }
 
@@ -350,7 +378,7 @@ std::string FreshRssApiClient::endpoint(const std::string& path) const {
   return normalizeApiUrl(account.apiUrl) + "/" + path;
 }
 
-bool FreshRssApiClient::login(std::string& auth, std::string& error) {
+bool FreshRssApiClient::login(std::string& auth, std::string& error, const CancelCallback& shouldCancel) {
   std::string response;
   const std::string form = "Email=" + formEncode(account.username) + "&Passwd=" + formEncode(account.password);
   if (!HttpDownloader::postForm(endpoint("accounts/ClientLogin"), form,
@@ -358,14 +386,17 @@ bool FreshRssApiClient::login(std::string& auth, std::string& error) {
                                    if (response.size() + len > 2048) return false;
                                    response.append(reinterpret_cast<const char*>(data), len);
                                    return true;
-                                 })) {
+                                 },
+                                 {}, shouldCancel)) {
     error = "ClientLogin failed";
+    LOG_ERR("FRSS", "login: ClientLogin request failed");
     return false;
   }
   const std::string marker = "Auth=";
   const size_t start = response.find(marker);
   if (start == std::string::npos) {
     error = "FreshRSS returned no Auth token";
+    LOG_ERR("FRSS", "login: ClientLogin response had no Auth= token (likely bad credentials)");
     return false;
   }
   const size_t valueStart = start + marker.size();
@@ -373,22 +404,26 @@ bool FreshRssApiClient::login(std::string& auth, std::string& error) {
   auth = response.substr(valueStart, end == std::string::npos ? std::string::npos : end - valueStart);
   if (auth.empty() || auth.size() > 1024) {
     error = "FreshRSS Auth token is invalid";
+    LOG_ERR("FRSS", "login: Auth token failed validation (len=%zu)", auth.size());
     return false;
   }
   return true;
 }
 
 bool FreshRssApiClient::getJson(const std::string& path, const FreshRssJsonParser::Document /*document*/,
-                                FreshRssJsonParser& parser, const std::string& auth, std::string& error) {
+                                FreshRssJsonParser& parser, const std::string& auth, std::string& error,
+                                bool* requestCompleted, const CancelCallback& shouldCancel) {
   const std::vector<HttpDownloader::Header> headers = {{"Authorization", "GoogleLogin auth=" + auth},
                                                         {"Accept", "application/json"}};
   const bool fetched = HttpDownloader::fetchUrlWithHeaders(
       endpoint(path), [&parser](const uint8_t* data, size_t len) {
         parser.feed(data, len);
         return parser.ok();
-      }, headers);
+      }, headers, shouldCancel);
+  if (requestCompleted) *requestCompleted = fetched;
   if (!fetched || !parser.finish()) {
-    error = "FreshRSS response could not be parsed";
+    error = fetched ? "FreshRSS response could not be parsed" : "FreshRSS request failed";
+    LOG_ERR("FRSS", "getJson failed for %s: %s", path.c_str(), error.c_str());
     return false;
   }
   return true;
@@ -405,18 +440,21 @@ bool FreshRssApiClient::refresh(const size_t articleLimit, FreshRssMetadata& met
   return fetchArticles(auth, articleLimit, sink, error);
 }
 
-bool FreshRssApiClient::fetchMetadata(FreshRssMetadata& metadata, std::string& auth, std::string& error) {
+bool FreshRssApiClient::fetchMetadata(FreshRssMetadata& metadata, std::string& auth, std::string& error,
+                                      const CancelCallback& shouldCancel) {
   if (account.apiUrl.empty() || account.username.empty() || account.password.empty()) {
     error = "FreshRSS account is not configured";
     return false;
   }
-  if (!login(auth, error)) return false;
+  if (!login(auth, error, shouldCancel)) return false;
   FreshRssJsonParser subscriptions(FreshRssJsonParser::Document::Subscriptions);
   if (!getJson("reader/api/0/subscription/list?output=json", FreshRssJsonParser::Document::Subscriptions, subscriptions,
-               auth, error))
+               auth, error, nullptr, shouldCancel))
     return false;
   FreshRssJsonParser tags(FreshRssJsonParser::Document::Tags);
-  if (!getJson("reader/api/0/tag/list?output=json", FreshRssJsonParser::Document::Tags, tags, auth, error)) return false;
+  if (!getJson("reader/api/0/tag/list?output=json", FreshRssJsonParser::Document::Tags, tags, auth, error, nullptr,
+               shouldCancel))
+    return false;
   metadata = subscriptions.metadata();
   metadata.tags = tags.metadata().tags;
   return true;
@@ -424,7 +462,8 @@ bool FreshRssApiClient::fetchMetadata(FreshRssMetadata& metadata, std::string& a
 
 bool FreshRssApiClient::fetchArticles(const std::string& auth, const size_t articleLimit, const ArticleSink& sink,
                                      std::string& error, const ProgressCallback& progress,
-                                     const FreshRssSyncCursor* cursor, bool* deltaUnsupported) {
+                                     const FreshRssSyncCursor* cursor, bool* deltaUnsupported,
+                                     const CancelCallback& shouldCancel) {
   if (auth.empty() || !sink) {
     error = "FreshRSS authentication is not available";
     return false;
@@ -461,8 +500,16 @@ bool FreshRssApiClient::fetchArticles(const std::string& auth, const size_t arti
       if (progress) progress(received, boundedLimit);
       return true;
     });
-    if (!getJson(path, FreshRssJsonParser::Document::Articles, articles, auth, error)) {
-      if (deltaUnsupported && cursor && cursor->valid && !articles.sinkFailed()) *deltaUnsupported = true;
+    bool requestCompleted = false;
+    if (!getJson(path, FreshRssJsonParser::Document::Articles, articles, auth, error, &requestCompleted,
+                shouldCancel)) {
+      // Only treat this as "the server ignored ot=" when the HTTP request
+      // itself completed but the response then failed to parse or validate.
+      // A transport-level failure (DNS, timeout, TLS, connection reset) says
+      // nothing about delta support, and must not trigger a full re-download
+      // stacked on top of a connection that just dropped.
+      if (deltaUnsupported && cursor && cursor->valid && requestCompleted && !articles.sinkFailed())
+        *deltaUnsupported = true;
       return false;
     }
     continuation = articles.continuation();

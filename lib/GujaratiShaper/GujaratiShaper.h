@@ -36,7 +36,10 @@ class GujaratiShaper {
    *
    * Scans the input for Gujarati sequences and applies GSUB-derived
    * substitution rules (conjunct formation, half-forms, etc). Non-Gujarati
-   * codepoints pass through unchanged.
+   * codepoints pass through unchanged. Input longer than one shaping window
+   * (MAX_WORD_CPS codepoints, see GujaratiShaper.cpp) is shaped in successive
+   * chunks rather than truncated — a conjunct that happens to straddle a
+   * chunk boundary won't form, but no codepoints are dropped.
    *
    * @param input      Input UTF-8 string
    * @param inputLen   Length of input in bytes

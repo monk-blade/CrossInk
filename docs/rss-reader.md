@@ -25,9 +25,11 @@ unmodified CrossPoint checkout, not something intended for an upstream PR.
   stale, malformed, or inconsistent delta responses automatically rebuild the
   full snapshot. No linked article page or individual feed URL is ever
   requested.
-  Refresh remains available as a visible header button and in the footer hint;
-  the button starts the only network operation and is safe to use while
-  browsing the cached copy.
+  Refresh is a dashboard row (Feeds > Refresh) that runs the sync described
+  above; it starts the only network operation and is safe to use while
+  browsing the cached copy. The header button and footer-hint refresh
+  shortcuts, along with the settings row that configured them, were removed
+  once the dashboard row shipped.
 - The home browser is category-first. **Categories** opens all articles in a
   selected category directly. **Subscriptions** opens category → feed →
   article navigation. Both views filter the same global snapshot locally,
@@ -196,10 +198,11 @@ FreshRSS snapshots are versioned (current v4) and committed at
 `/.crosspoint/freshrss/snapshot.bin`; a temporary file and backup are used so a
 failed refresh preserves the previous valid snapshot. v4 stores the last
 successful modified timestamp, account identity, article limit, generation, and
-modified timestamps in its bounded index. Direct RSS cache files
-remain readable for migration compatibility, but are no longer produced by the
-FreshRSS UI. Cache format details are documented in
-[file-formats.md](file-formats.md).
+modified timestamps in its bounded index. FreshRSS is the only RSS backend —
+the direct RSS/Atom feed path (`feeds.json`, XML parsing) has been removed;
+`RssItemCache`'s reader (`loadIndex`/`loadItemBody`) still exists and is still
+tested, but nothing in the UI calls it anymore. Cache format details are
+documented in [file-formats.md](file-formats.md#crosspointfreshrsssnapshotbin).
 
 Snapshot version 4 prefixes every article record with its bounded byte length
 and appends a committed index containing article keys, modified timestamps,
@@ -274,10 +277,13 @@ need to reshape it.
 
 Sized for the ESP32-C3's ~380KB RAM with no PSRAM:
 
-- A FreshRSS refresh admits at most the selected 200/500/1000 items. The JSON
-  parser requests are adaptively sized to 25/50/100 items from the available
-  heap, while the sink retains only the current bounded item; completed metadata and
-  shaped body records are written to `snapshot.bin.tmp` immediately.
+- A FreshRSS refresh admits at most the selected 200/500/1000 items. Each HTTP
+  request asks for a fixed 25-item page (`FreshRssApiClient::fetchArticles`'s
+  `requestPageSize`) — smaller than the configured server default because the
+  device's HTTP timeout can be exceeded by the time a 100-item response
+  begins streaming. The sink retains only the current bounded item; completed
+  metadata and shaped body records are written to `snapshot.bin.tmp`
+  immediately.
 - Each body is capped at 32 KB. Oversized bodies are marked truncated and the
   available prefix is still cached. The reader stores word pointers in its line
   index rather than copying every word string, so pagination does not double

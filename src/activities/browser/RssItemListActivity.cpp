@@ -4,24 +4,21 @@
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <GujaratiIntegration.h>
-#include <HtmlRichText.h>
 #include <I18n.h>
 #include <Logging.h>
-#include <RssParser.h>
-#include <RssStream.h>
 #include <WiFi.h>
 
 #include <algorithm>
 #include <cstring>
 #include <ctime>
 #include <functional>
+#include <optional>
 
 #include "MappedInputManager.h"
 #include "CrossPointSettings.h"
 #include "FreshRssCache.h"
 #include "FreshRssSyncRunner.h"
 #include "RssDateFormatter.h"
-#include "RssItemFilter.h"
 #include "RssItemStateStore.h"
 #include "activities/reader/ReaderUtils.h"
 #include "SdCardFontSystem.h"
@@ -30,12 +27,8 @@
 #include "activities/reader/RssArticleActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "network/HttpDownloader.h"
 
 namespace {
-// One article is converted and written at a time. This preserves the existing
-// hard article bound without retaining all feed bodies on the ESP32 heap.
-constexpr size_t MAX_CACHED_ARTICLE_CHARS = 32 * 1024;
 constexpr unsigned long SYNC_PROGRESS_PAINT_MS = 250;
 constexpr int RSS_DATE_FONT_ID = SMALL_FONT_ID;
 }  // namespace
@@ -48,7 +41,6 @@ void RssItemListActivity::onEnter() {
   freshVisibleKeys.clear();
   freshUnavailableKeys.clear();
   freshPageStart = 0;
-  visibleItems.clear();
   selectorIndex = 0;
   consumeConfirm = false;
   consumeBack = false;
@@ -128,88 +120,67 @@ void RssItemListActivity::restoreReaderFont() {
 }
 
 bool RssItemListActivity::loadFromCache() {
-  if (feed.isFreshRss) {
-    // loadKeys validates the header, bounded records, and commit marker while
-    // producing the compact key list. Do not run the expensive stats scan and
-    // then scan the same snapshot again just to open the cached list.
-    if (!rebuildVisibleItems()) return false;
-    cacheState = "cached";
-    FreshRssCache::SnapshotInfo snapshot;
-    if (FreshRssCache::loadSnapshotInfo(snapshot) && snapshot.lastRefreshUnix != 0) {
-      const time_t now = std::time(nullptr);
-      if (now >= static_cast<time_t>(snapshot.lastRefreshUnix) &&
-          static_cast<unsigned long>(now - static_cast<time_t>(snapshot.lastRefreshUnix)) >= 24UL * 60UL * 60UL)
-        cacheState = "stale";
-    }
-    return visibleCount() == 0 || ensureFreshPageForIndex(0);
+  // loadKeys validates the header, bounded records, and commit marker while
+  // producing the compact key list. Do not run the expensive stats scan and
+  // then scan the same snapshot again just to open the cached list.
+  if (!rebuildVisibleItems()) return false;
+  cacheState = tr(STR_FRESHRSS_CACHE_STATE_CACHED);
+  FreshRssCache::SnapshotInfo snapshot;
+  if (FreshRssCache::loadSnapshotInfo(snapshot) && snapshot.lastRefreshUnix != 0) {
+    const time_t now = std::time(nullptr);
+    if (now >= static_cast<time_t>(snapshot.lastRefreshUnix) &&
+        static_cast<unsigned long>(now - static_cast<time_t>(snapshot.lastRefreshUnix)) >= 24UL * 60UL * 60UL)
+      cacheState = tr(STR_FRESHRSS_CACHE_STATE_STALE);
   }
-  std::vector<CachedRssItem> cached;
-  const bool loaded = RssItemCache::loadIndex(feed.url, cached);
-  if (!loaded) return false;
-  items = std::move(cached);
-  cacheState = "cached";
-  rebuildVisibleItems();
-  selectorIndex = std::min(selectorIndex, std::max(0, static_cast<int>(visibleItems.size()) - 1));
-  return true;
+  return visibleCount() == 0 || ensureFreshPageForIndex(0);
 }
 
 bool RssItemListActivity::rebuildVisibleItems() {
-  if (feed.isFreshRss) {
-    std::vector<uint32_t> keys;
-    RssListQuery query;
-    query.source = feed.freshFilter;
-    query.id = feed.freshId;
-    query.local = feed.freshLocalFilter;
-    if (!FreshRssCache::loadKeys(query, keys)) {
-      freshVisibleKeys.clear();
-      items.clear();
-      return false;
-    }
-    const bool unreadOnly = feed.freshUnreadOnly || feed.freshLocalFilter == RssLocalFilter::Unread ||
-                            (feed.freshLocalFilter == RssLocalFilter::None &&
-                             SETTINGS.rssListFilter == CrossPointSettings::RSS_UNREAD_ONLY);
+  std::vector<uint32_t> keys;
+  RssListQuery query;
+  query.source = feed.freshFilter;
+  query.id = feed.freshId;
+  query.local = feed.freshLocalFilter;
+  if (!FreshRssCache::loadKeys(query, keys)) {
     freshVisibleKeys.clear();
-    freshVisibleKeys.reserve(keys.size());
-    freshUnavailableKeys.clear();
-    for (const uint32_t key : keys) {
-      if (unreadOnly && RSS_ITEM_STATE.isRead(feed.url, key)) continue;
-      if (feed.freshLocalFilter == RssLocalFilter::Starred && !RSS_ITEM_STATE.isStarred(feed.url, key)) continue;
-      if (feed.freshLocalFilter == RssLocalFilter::Queued && !RSS_ITEM_STATE.isQueued(feed.url, key)) continue;
-      freshVisibleKeys.push_back(key);
-    }
-    if (feed.freshLocalFilter == RssLocalFilter::Queued) {
-      // Preserve queued IDs that FreshRSS no longer returns. They remain
-      // removable locally and never trigger a network lookup.
-      for (const uint32_t key : RSS_ITEM_STATE.loadQueuedIds(feed.url)) {
-        if (std::find(freshVisibleKeys.begin(), freshVisibleKeys.end(), key) != freshVisibleKeys.end()) continue;
-        freshVisibleKeys.push_back(key);
-        freshUnavailableKeys.push_back(key);
-      }
-    }
     items.clear();
-    freshPageStart = 0;
-    selectorIndex = std::min(selectorIndex, std::max(0, static_cast<int>(freshVisibleKeys.size()) - 1));
-    return true;
+    return false;
   }
-  visibleItems = RssItemFilter::visibleIndexes(
-      items.size(), feed.freshUnreadOnly || SETTINGS.rssListFilter == CrossPointSettings::RSS_UNREAD_ONLY,
-      [this](const size_t index) { return RSS_ITEM_STATE.isRead(feed.url, items[index].key); });
-  selectorIndex = std::min(selectorIndex, std::max(0, static_cast<int>(visibleItems.size()) - 1));
+  const bool unreadOnly = feed.freshUnreadOnly || feed.freshLocalFilter == RssLocalFilter::Unread ||
+                          (feed.freshLocalFilter == RssLocalFilter::None &&
+                           SETTINGS.rssListFilter == CrossPointSettings::RSS_UNREAD_ONLY);
+  freshVisibleKeys.clear();
+  freshVisibleKeys.reserve(keys.size());
+  freshUnavailableKeys.clear();
+  for (const uint32_t key : keys) {
+    if (unreadOnly && RSS_ITEM_STATE.isRead(feed.url, key)) continue;
+    if (feed.freshLocalFilter == RssLocalFilter::Starred && !RSS_ITEM_STATE.isStarred(feed.url, key)) continue;
+    if (feed.freshLocalFilter == RssLocalFilter::Queued && !RSS_ITEM_STATE.isQueued(feed.url, key)) continue;
+    freshVisibleKeys.push_back(key);
+  }
+  if (feed.freshLocalFilter == RssLocalFilter::Queued) {
+    // Preserve queued IDs that FreshRSS no longer returns. They remain
+    // removable locally and never trigger a network lookup.
+    for (const uint32_t key : RSS_ITEM_STATE.loadQueuedIds(feed.url)) {
+      if (std::find(freshVisibleKeys.begin(), freshVisibleKeys.end(), key) != freshVisibleKeys.end()) continue;
+      freshVisibleKeys.push_back(key);
+      freshUnavailableKeys.push_back(key);
+    }
+  }
+  items.clear();
+  freshPageStart = 0;
+  selectorIndex = std::min(selectorIndex, std::max(0, static_cast<int>(freshVisibleKeys.size()) - 1));
   return true;
 }
 
-size_t RssItemListActivity::visibleCount() const {
-  return feed.isFreshRss ? freshVisibleKeys.size() : visibleItems.size();
-}
+size_t RssItemListActivity::visibleCount() const { return freshVisibleKeys.size(); }
 
 bool RssItemListActivity::listHasSubtitle() const {
-  const bool showDates = SETTINGS.rssDateDisplay != CrossPointSettings::RSS_HIDE_DATE;
   const bool comfortable = SETTINGS.rssListDensity == CrossPointSettings::RSS_COMFORTABLE_LIST;
-  return comfortable && (showDates || feed.isFreshRss);
+  return comfortable;
 }
 
 bool RssItemListActivity::ensureFreshPageForIndex(const size_t index) {
-  if (!feed.isFreshRss) return true;
   if (index >= freshVisibleKeys.size()) {
     items.clear();
     freshPageStart = index;
@@ -237,8 +208,8 @@ bool RssItemListActivity::ensureFreshPageForIndex(const size_t index) {
         freshUnavailableKeys.end()) {
       CachedRssItem unavailable;
       unavailable.key = freshVisibleKeys[i];
-      unavailable.title = "Unavailable queued article";
-      unavailable.subtitle = "Hold Confirm to remove";
+      unavailable.title = tr(STR_FRESHRSS_UNAVAILABLE_TITLE);
+      unavailable.subtitle = tr(STR_FRESHRSS_HOLD_CONFIRM_REMOVE);
       unavailable.unavailable = true;
       page.push_back(std::move(unavailable));
     } else if (availableIndex < availableItems.size()) {
@@ -253,25 +224,17 @@ bool RssItemListActivity::ensureFreshPageForIndex(const size_t index) {
 }
 
 const CachedRssItem* RssItemListActivity::itemAtVisibleIndex(const size_t index) const {
-  if (feed.isFreshRss) {
-    if (index < freshPageStart || index >= freshPageStart + items.size()) return nullptr;
-    return &items[index - freshPageStart];
-  }
-  if (index >= visibleItems.size()) return nullptr;
-  return &items[visibleItems[index]];
+  if (index < freshPageStart || index >= freshPageStart + items.size()) return nullptr;
+  return &items[index - freshPageStart];
 }
 
 int RssItemListActivity::selectedItemIndex() {
-  if (feed.isFreshRss && !ensureFreshPageForIndex(static_cast<size_t>(std::max(0, selectorIndex)))) return -1;
-  if (feed.isFreshRss) {
-    if (selectorIndex < 0 || selectorIndex >= static_cast<int>(freshVisibleKeys.size())) return -1;
-    if (selectorIndex < static_cast<int>(freshPageStart) ||
-        selectorIndex >= static_cast<int>(freshPageStart + items.size()))
-      return -1;
-    return selectorIndex - static_cast<int>(freshPageStart);
-  }
-  if (selectorIndex < 0 || selectorIndex >= static_cast<int>(visibleItems.size())) return -1;
-  return visibleItems[selectorIndex];
+  if (!ensureFreshPageForIndex(static_cast<size_t>(std::max(0, selectorIndex)))) return -1;
+  if (selectorIndex < 0 || selectorIndex >= static_cast<int>(freshVisibleKeys.size())) return -1;
+  if (selectorIndex < static_cast<int>(freshPageStart) ||
+      selectorIndex >= static_cast<int>(freshPageStart + items.size()))
+    return -1;
+  return selectorIndex - static_cast<int>(freshPageStart);
 }
 
 void RssItemListActivity::toggleSelectedStar() {
@@ -286,13 +249,14 @@ void RssItemListActivity::toggleSelectedQueue() {
   const int itemIndex = selectedItemIndex();
   if (itemIndex < 0) return;
   if (!RSS_ITEM_STATE.toggleQueued(feed.url, items[itemIndex].key)) {
-    queueMessage = "Reading queue is full (256)";
+    queueMessage = tr(STR_FRESHRSS_QUEUE_FULL);
     queueMessageUntil = millis() + 2200;
     requestUpdate();
     return;
   }
   RSS_ITEM_STATE.saveIfDirty();
-  queueMessage = RSS_ITEM_STATE.isQueued(feed.url, items[itemIndex].key) ? "Added to reading queue" : "Removed from reading queue";
+  queueMessage = RSS_ITEM_STATE.isQueued(feed.url, items[itemIndex].key) ? tr(STR_FRESHRSS_ADDED_TO_QUEUE)
+                                                                          : tr(STR_FRESHRSS_REMOVED_FROM_QUEUE);
   queueMessageUntil = millis() + 1600;
   if (feed.freshLocalFilter == RssLocalFilter::Queued) rebuildVisibleItems();
   requestUpdate();
@@ -323,7 +287,7 @@ void RssItemListActivity::onWifiSelectionComplete(const bool connected) {
     statusMessage = tr(STR_LOADING);
     requestUpdate(true);
     fetchFeed();
-  } else if (feed.isFreshRss ? FreshRssCache::exists() : !items.empty()) {
+  } else if (FreshRssCache::exists()) {
     // A manual refresh was cancelled — keep showing what we already had.
     state = ListState::BROWSING;
     requestUpdate();
@@ -342,105 +306,37 @@ void RssItemListActivity::fetchFeed() {
     }
   };
 
-  if (feed.isFreshRss) {
-    FreshRssSyncHost host{syncProgress,
-                          [this](const char* message) { statusMessage = message; },
-                          [this](const bool force) { paintSyncProgress(force); }};
-    std::string error;
-    if (!runFreshRssSync(host, error)) {
-      disconnectWifi();
-      const bool hasCache = FreshRssCache::exists();
-      state = hasCache ? ListState::BROWSING : ListState::ERROR;
-      if (hasCache) cacheState = "refresh failed";
-      if (!hasCache) errorMessage = error.empty() ? tr(STR_FETCH_FEED_FAILED) : error;
-      requestUpdate();
-      return;
-    }
-    statusMessage = "Reloading article cache";
-    paintSyncProgress(true);
-    rebuildVisibleItems();
-    if (visibleCount() > 0 && !ensureFreshPageForIndex(0)) {
-      disconnectWifi();
-      state = ListState::ERROR;
-      errorMessage = tr(STR_PARSE_FEED_FAILED);
-      requestUpdate();
-      return;
-    }
-    selectorIndex = 0;
+  // host.shouldCancel is intentionally left unset here — see the identical
+  // comment in RssFeedListActivity::performSync() for why live cancellation
+  // isn't wired up yet even though the network layer now supports it.
+  FreshRssSyncHost host{syncProgress,
+                        [this](const char* message) { statusMessage = message; },
+                        [this](const bool force) { paintSyncProgress(force); }};
+  std::string error;
+  if (!runFreshRssSync(host, error)) {
     disconnectWifi();
-    state = ListState::BROWSING;
-    cacheState = "current";
-    if (visibleCount() == 0) errorMessage.clear();
+    const bool hasCache = FreshRssCache::exists();
+    state = hasCache ? ListState::BROWSING : ListState::ERROR;
+    if (hasCache) cacheState = tr(STR_FRESHRSS_CACHE_STATE_REFRESH_FAILED);
+    if (!hasCache) errorMessage = error.empty() ? tr(STR_FETCH_FEED_FAILED) : error;
     requestUpdate();
     return;
   }
-
-  RssItemCache::FeedWriteSession writer(feed.url);
-  if (!writer.begin()) {
-    disconnectWifi();
-    state = items.empty() ? ListState::ERROR : ListState::BROWSING;
-    if (items.empty()) errorMessage = tr(STR_FETCH_FEED_FAILED);
-    requestUpdate();
-    return;
-  }
-
-  RssParser parser(MAX_CACHED_ARTICLE_CHARS);
-  parser.setItemSink([&writer](RssItem&& parsed) {
-    CachedRssItem item;
-    item.key = RssItemStateStore::itemKey(parsed.id, parsed.link, parsed.title);
-    item.title = std::move(parsed.title);
-    item.link = std::move(parsed.link);
-    item.date = std::move(parsed.date);
-    item.body = HtmlRichText::convert(parsed.body, MAX_CACHED_ARTICLE_CHARS);
-    std::string().swap(parsed.body);
-    item.bodyTruncated = parsed.bodyTruncated;
-
-    // Feed content bypasses ParsedText's parse-time shaping. Shape once before
-    // the record is written so offline article reads do no shaping work.
-    GujaratiIntegration::shapeLongUiString(item.title);
-    for (auto& paragraph : item.body) {
-      for (auto& word : paragraph.words) GujaratiIntegration::shapeSanitizedWord(word.text);
-    }
-    return writer.append(item);
-  });
-
-  bool fetched = false;
-  {
-    RssParserStream stream{parser};
-    fetched = HttpDownloader::fetchUrl(feed.url, stream);
-  }
-
-  if (parser.truncated()) {
-    LOG_DBG("RSS", "Feed exceeded %u-item safety bound; cached %zu items",
-            static_cast<unsigned int>(RssParser::MAX_ITEMS), parser.itemCount());
-  }
-
-  if (!fetched || !parser || parser.sinkFailed() || !writer.commit()) {
-    writer.abort();
-    state = items.empty() ? ListState::ERROR : ListState::BROWSING;
-    if (items.empty()) errorMessage = parser.sinkFailed() ? tr(STR_FETCH_FEED_FAILED) : tr(STR_PARSE_FEED_FAILED);
-    disconnectWifi();
-    requestUpdate();
-    return;
-  }
-
-  std::vector<CachedRssItem> cached;
-  if (!RssItemCache::loadIndex(feed.url, cached)) {
-    disconnectWifi();
-    state = items.empty() ? ListState::ERROR : ListState::BROWSING;
-    if (items.empty()) errorMessage = tr(STR_PARSE_FEED_FAILED);
-    requestUpdate();
-    return;
-  }
-  items = std::move(cached);
+  statusMessage = tr(STR_FRESHRSS_RELOADING_CACHE);
+  paintSyncProgress(true);
   rebuildVisibleItems();
+  if (visibleCount() > 0 && !ensureFreshPageForIndex(0)) {
+    disconnectWifi();
+    state = ListState::ERROR;
+    errorMessage = tr(STR_PARSE_FEED_FAILED);
+    requestUpdate();
+    return;
+  }
   selectorIndex = 0;
-
   disconnectWifi();
-
-  state = items.empty() ? ListState::ERROR : ListState::BROWSING;
-  cacheState = "current";
-  if (items.empty()) errorMessage = tr(STR_NO_ENTRIES);
+  state = ListState::BROWSING;
+  cacheState = tr(STR_FRESHRSS_CACHE_STATE_CURRENT);
+  if (visibleCount() == 0) errorMessage.clear();
   requestUpdate();
 }
 
@@ -448,7 +344,7 @@ void RssItemListActivity::openSelectedItem() {
   const int itemIndex = selectedItemIndex();
   if (itemIndex < 0) return;
   if (items[itemIndex].unavailable) {
-    queueMessage = "Article is no longer cached; hold Confirm to remove";
+    queueMessage = tr(STR_FRESHRSS_ARTICLE_NOT_CACHED);
     queueMessageUntil = millis() + 2200;
     requestUpdate();
     return;
@@ -467,7 +363,7 @@ void RssItemListActivity::openSelectedItem() {
 
 void RssItemListActivity::openNextUnread() {
   for (int i = selectorIndex; i < static_cast<int>(visibleCount()); ++i) {
-    const uint32_t key = feed.isFreshRss ? freshVisibleKeys[i] : items[visibleItems[i]].key;
+    const uint32_t key = freshVisibleKeys[i];
     if (!RSS_ITEM_STATE.isRead(feed.url, key)) {
       selectorIndex = i;
       openSelectedItem();
@@ -578,7 +474,7 @@ void RssItemListActivity::render(RenderLock&&) {
     const size_t progressCurrent = std::min(syncProgress.received.load(), progressTotal);
     const int progressY = pageHeight / 2 + 18;
     const char* visibleStatus =
-        syncProgress.processingArticle.load() ? "Processing article" : statusMessage.c_str();
+        syncProgress.processingArticle.load() ? tr(STR_FRESHRSS_PROCESSING_ARTICLE) : statusMessage.c_str();
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - (progressTotal > 0 ? 18 : 0), visibleStatus);
     if (progressTotal > 0) {
       GUI.drawProgressBar(renderer, Rect{50, progressY, renderer.getScreenWidth() - 100, 20}, progressCurrent,
@@ -609,8 +505,8 @@ void RssItemListActivity::render(RenderLock&&) {
 
   if (visibleCount() == 0) {
     const char* emptyMessage = nullptr;
-    if (feed.freshLocalFilter == RssLocalFilter::Starred) emptyMessage = "No starred articles";
-    else if (feed.freshLocalFilter == RssLocalFilter::Queued) emptyMessage = "Reading queue is empty";
+    if (feed.freshLocalFilter == RssLocalFilter::Starred) emptyMessage = tr(STR_FRESHRSS_NO_STARRED);
+    else if (feed.freshLocalFilter == RssLocalFilter::Queued) emptyMessage = tr(STR_FRESHRSS_QUEUE_EMPTY);
     else if (feed.freshLocalFilter == RssLocalFilter::Unread || feed.freshUnreadOnly ||
              SETTINGS.rssListFilter == CrossPointSettings::RSS_UNREAD_ONLY)
       emptyMessage = tr(STR_RSS_NO_UNREAD);
@@ -626,7 +522,7 @@ void RssItemListActivity::render(RenderLock&&) {
     const bool showSubtitle = listHasSubtitle();
     const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, showSubtitle);
     const int pageStartIndex = pageItems > 0 ? (selectorIndex / pageItems) * pageItems : 0;
-    if (feed.isFreshRss && !ensureFreshPageForIndex(static_cast<size_t>(std::max(0, pageStartIndex)))) {
+    if (!ensureFreshPageForIndex(static_cast<size_t>(std::max(0, pageStartIndex)))) {
       state = ListState::ERROR;
       errorMessage = tr(STR_PARSE_FEED_FAILED);
       requestUpdate();
@@ -645,6 +541,13 @@ void RssItemListActivity::render(RenderLock&&) {
       }
       visibleTitles += '\n';
     }
+    // The prewarm scope must stay alive until after GUI.drawList() below draws
+    // the real, positioned rows: its destructor clears the SD font's prewarmed
+    // glyph cache (see FontCacheManager::PrewarmScope), so ending the scope
+    // here would discard the batch-loaded glyphs before drawList ever draws
+    // them, falling back to the small on-demand overflow cache and producing
+    // tofu for shaped Gujarati titles.
+    std::optional<FontCacheManager::PrewarmScope> prewarmScope;
     if (!visibleTitles.empty()) {
       auto* fcm = renderer.getFontCacheManager();
       if (fcm) {
@@ -662,7 +565,7 @@ void RssItemListActivity::render(RenderLock&&) {
           truncatedTitles += renderer.truncatedText(UI_10_FONT_ID, item->title.c_str(), rowTextWidth);
           truncatedTitles += '\n';
         }
-        auto scope = fcm->createPrewarmScope();
+        prewarmScope.emplace(fcm->createPrewarmScope());
         renderer.drawText(UI_10_FONT_ID, 0, 0, visibleTitles.c_str(), true, EpdFontFamily::REGULAR);
         if (!truncatedTitles.empty()) {
           renderer.drawText(UI_10_FONT_ID, 0, 0, truncatedTitles.c_str(), true, EpdFontFamily::REGULAR);
@@ -671,7 +574,7 @@ void RssItemListActivity::render(RenderLock&&) {
         if (showSubtitle) {
           renderer.drawText(SMALL_FONT_ID, 0, 0, visibleTitles.c_str(), true, EpdFontFamily::REGULAR);
         }
-        scope.endScanAndPrewarm();
+        prewarmScope->endScanAndPrewarm();
       }
     }
 

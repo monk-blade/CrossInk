@@ -6188,14 +6188,21 @@ void EpubReaderActivity::renderStatusBar() const {
   char timeLeftLabel[24] = {};
   const char* timeLeft =
       (!activeFootnotePreview && formatTimeLeftLabel(timeLeftLabel, sizeof(timeLeftLabel))) ? timeLeftLabel : nullptr;
+  // The prewarm scope must stay alive until after GUI.drawStatusBar() below
+  // draws the real, positioned title: its destructor clears the SD font's
+  // prewarmed glyph cache (see FontCacheManager::PrewarmScope), so ending the
+  // scope here would discard the batch-loaded glyphs before drawStatusBar
+  // ever draws them, falling back to the small on-demand overflow cache and
+  // producing tofu for shaped Gujarati titles.
+  std::optional<FontCacheManager::PrewarmScope> prewarmScope;
   if (!title.empty()) {
     auto* fcm = renderer.getFontCacheManager();
     if (fcm) {
       std::string shapedTitle = title;
       GujaratiIntegration::shapeUiString(shapedTitle);
-      auto scope = fcm->createPrewarmScope();
+      prewarmScope.emplace(fcm->createPrewarmScope());
       renderer.drawText(SMALL_FONT_ID, 0, 0, shapedTitle.c_str(), true, EpdFontFamily::REGULAR);
-      scope.endScanAndPrewarm();
+      prewarmScope->endScanAndPrewarm();
     }
   }
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, bookmarked, timeLeft,

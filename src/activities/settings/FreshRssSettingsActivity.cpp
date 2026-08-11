@@ -90,6 +90,10 @@ void FreshRssSettingsActivity::selectRow() {
     const size_t next = it == std::end(LIMITS) ? 0 : (static_cast<size_t>(it - std::begin(LIMITS)) + 1) % std::size(LIMITS);
     SETTINGS.freshRssArticleLimit = LIMITS[next];
     SETTINGS.saveToFile();
+    // Keep the read-marker cap for the FreshRSS pseudo-feed in step with the
+    // new limit so raising it doesn't start evicting read markers below the
+    // new snapshot size (see RssItemStateStore::setFreshRssArticleLimit).
+    RSS_ITEM_STATE.setFreshRssArticleLimit(SETTINGS.freshRssArticleLimit);
     requestUpdate();
   } else if (selectedIndex == 5) {
     if (FreshRssCache::clear()) {

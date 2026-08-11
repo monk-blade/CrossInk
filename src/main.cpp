@@ -888,7 +888,7 @@ void setup() {
     logBootHeap("sync credentials loaded");
     Dictionary::isValidDictionary();
     FRESHRSS_ACCOUNT.loadFromFile();
-    RSS_FEED_STORE.loadFromFile();
+    RSS_ITEM_STATE.setFreshRssArticleLimit(SETTINGS.freshRssArticleLimit);
     RSS_ITEM_STATE.load();
   } else if (snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::KOREADER_SYNC) ||
              snapshotTarget == static_cast<uint32_t>(NetworkBootTarget::KOREADER_AUTH) ||

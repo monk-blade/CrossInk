@@ -251,7 +251,12 @@ Binary layout:
 
 ## `section.bin`
 
-### Version 59
+### Version 63
+
+(This heading previously said "Version 59" — check `SECTION_FILE_VERSION` in
+`lib/Epub/Epub/Section.cpp` directly if this drifts again; recent bumps were
+for Gujarati shaping fixes, not layout changes, so the ImHex pattern below is
+still accurate.)
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
@@ -329,7 +334,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 59
+#define EXPECTED_VERSION 63
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96
@@ -577,3 +582,63 @@ if (parsedSize != fileSize) {
     std::warning(std::format("Unparsed data detected: {} bytes remaining at offset 0x{:X}", fileSize - parsedSize, parsedSize));
 }
 ```
+
+## `/.crosspoint/freshrss/snapshot.bin`
+
+### Version 4
+
+The committed FreshRSS article cache, written by `FreshRssCache::WriteSession`
+(`src/FreshRssCache.cpp`) and read by every `FreshRssCache::load*`/`stats()`
+function. `docs/rss-reader.md` gives the feature-level picture (delta sync,
+migration); this section is the byte layout referenced from there.
+
+Magic `0x46525335` ("FRS5"), trailing commit marker `0x46524331` ("FRC1") —
+both a v3+ addition; a truncated file is rejected because `readCommit()`
+requires the marker to land at exact EOF. Versions 1-3 remain readable
+(`readHeader()`); a v1 snapshot is migrated to v4 in place by
+`ensureCurrentSnapshot()` the first time it's opened.
+
+Header (fixed size, POD little-endian per `Serialization.h`):
+
+| Field | Type | Notes |
+|---|---|---|
+| magic | u32 | `0x46525335` |
+| version | u8 | 4 |
+| articleCount | u32 | backpatched at commit |
+| subCount | u32 | subscription count |
+| tagCount | u32 | tag count |
+| limit | u32 | configured article limit (200/500/1000) |
+| indexOffset | u32 | byte offset of the index table, backpatched at commit |
+| indexCount | u32 | backpatched at commit |
+| lastRefreshUnix | u32 | v3+; 0 on boards without a valid RTC |
+| cursorModifiedMsec | u64 | v4; delta-sync cursor |
+| generation | u32 | v4; incremented each successful sync |
+| accountIdentity | u32 | v4; hash of FreshRSS URL+username — a delta sync is only attempted when this matches the current account |
+
+Followed by metadata (`writeMetadata`): `subCount` subscriptions
+(id, title, htmlUrl, category ids) and `tagCount` tags (id, label).
+
+Then `articleCount` variable-length article records, each prefixed with a
+`u32 recordSize` (the v4 "sized record" — lets a reader seek past an article
+without loading its body). A record holds id, title, author, origin,
+originUrl, streamId, link, date, category ids, a `bodyTruncated` flag, and the
+shaped `RichText` body (paragraphs of styled words, already Gujarati-shaped
+and NFC-composed — see `docs/gujarati-rendering.md`).
+
+Finally the index table at `indexOffset`: category id strings, then
+`indexCount` fixed-size entries (`FreshRssIndexEntry` in `FreshRssCache.h`) —
+key, modifiedMsec, recordOffset, recordSize, subscriptionIndex, flags (bit 0:
+body truncated), and a bounded category bitmask — then the `FRC1` commit
+marker.
+
+**Atomicity:** `commit()` writes to `snapshot.bin.tmp`, then
+`snapshot.bin` → `snapshot.bin.bak` → (temp renamed into place) →
+`snapshot.bin.bak` removed. A failed rename attempts to restore from the
+backup before giving up, so a crash mid-commit should never leave the reader
+without a previously-good snapshot.
+
+**No ImHex pattern yet** — the variable-length sized records and the
+`readArticle`/`readIndexEntry` field order are easiest to keep in sync by
+reading `FreshRssCache.cpp` directly (`readHeader`, `readMetadata`,
+`readArticle`, `readIndexEntry`) rather than a hand-maintained pattern; a
+pattern would be a welcome follow-up if this file drifts.

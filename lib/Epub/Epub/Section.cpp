@@ -16,9 +16,10 @@
 
 namespace {
 constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
-// v61: cache Gujarati-shaped EPUB words so EPUB and FreshRSS use the same
-// renderer input and do not reshape on every page turn.
-constexpr uint8_t SECTION_FILE_VERSION = 61;
+// v63: GujaratiShaper now recognizes U+0AF9 (ZHA) as a consonant and
+// U+0AC0 (ii-matra) as post-base, matching Unicode — words using either
+// codepoint in a reph-eligible position shape differently than before.
+constexpr uint8_t SECTION_FILE_VERSION = 63;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.

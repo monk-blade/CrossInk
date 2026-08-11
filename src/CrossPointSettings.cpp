@@ -421,16 +421,11 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["rssListFontFamily"] = rssListFontFamily;
   doc["rssListFontSize"] = rssListFontPointSize;
   doc["rssListSdFontFamilyName"] = rssListSdFontFamilyName;
-  doc["rssRefreshButton"] = rssRefreshButton;
   doc["rssMarkReadTiming"] = rssMarkReadTiming;
   doc["rssArticleEndAction"] = rssArticleEndAction;
   doc["rssShowButtonHints"] = rssShowButtonHints;
   doc["rssStarAction"] = rssStarAction;
   doc["freshRssArticleLimit"] = freshRssArticleLimit;
-  // Deprecated compatibility fields remain readable but do not affect the
-  // complete FreshRSS snapshot policy.
-  doc["rssCacheMode"] = rssCacheMode;
-  doc["rssMaxFullBodies"] = rssMaxFullBodies;
 }
 
 bool CrossPointSettings::fromJson(JsonVariantConst doc) {
@@ -633,7 +628,6 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   const char* rssListFamily = doc["rssListSdFontFamilyName"] | rssListSdFontFamilyName;
   strncpy(rssListSdFontFamilyName, rssListFamily, sizeof(rssListSdFontFamilyName) - 1);
   rssListSdFontFamilyName[sizeof(rssListSdFontFamilyName) - 1] = '\0';
-  rssRefreshButton = clamp(doc["rssRefreshButton"] | rssRefreshButton, RSS_REFRESH_BUTTON_COUNT, RSS_REFRESH_LEFT);
   rssMarkReadTiming = clamp(doc["rssMarkReadTiming"] | rssMarkReadTiming, RSS_MARK_READ_TIMING_COUNT,
                             RSS_MARK_READ_ON_OPEN);
   rssArticleEndAction = clamp(doc["rssArticleEndAction"] | rssArticleEndAction, RSS_ARTICLE_END_ACTION_COUNT,
@@ -644,8 +638,6 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   freshRssArticleLimit = (storedFreshLimit == 200 || storedFreshLimit == 500 || storedFreshLimit == 1000)
                              ? storedFreshLimit
                              : 200;
-  rssCacheMode = clamp(doc["rssCacheMode"] | rssCacheMode, RSS_CACHE_MODE_COUNT, RSS_CACHE_AUTOMATIC);
-  rssMaxFullBodies = doc["rssMaxFullBodies"] | rssMaxFullBodies;
 
   if (needsResave) requestResave();
   LOG_DBG("CPS", "Settings loaded from file");

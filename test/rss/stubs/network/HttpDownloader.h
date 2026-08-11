@@ -17,12 +17,15 @@ class HttpDownloader {
     std::vector<Header> headers;
   };
   using Handler = std::function<bool(const Request&, const DataCallback&)>;
+  using CancelCallback = std::function<bool()>;
 
   static Handler postHandler;
   static Handler getHandler;
   static std::vector<Request> requests;
 
-  static bool postForm(const std::string&, const std::string&, const DataCallback&, const std::vector<Header>& = {});
-  static bool fetchUrlWithHeaders(const std::string&, const DataCallback&, const std::vector<Header>&);
+  static bool postForm(const std::string&, const std::string&, const DataCallback&, const std::vector<Header>& = {},
+                       CancelCallback = nullptr);
+  static bool fetchUrlWithHeaders(const std::string&, const DataCallback&, const std::vector<Header>&,
+                                  CancelCallback = nullptr);
   static void reset();
 };

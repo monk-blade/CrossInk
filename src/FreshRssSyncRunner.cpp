@@ -24,16 +24,20 @@ bool runFreshRssSync(FreshRssSyncHost& host, std::string& error) {
   host.progress.limit.store(SETTINGS.freshRssArticleLimit);
   host.progress.processingArticle.store(false);
 
-  if (host.setStatus) host.setStatus("Preparing FreshRSS sync");
+  if (host.setStatus) host.setStatus(tr(STR_FRESHRSS_SYNC_PREPARING));
   if (host.paintProgress) host.paintProgress(true);
 
   FreshRssMetadata metadata;
   std::string auth;
   FreshRssApiClient client(FRESHRSS_ACCOUNT.getAccount());
-  if (host.setStatus) host.setStatus("Loading subscriptions and categories");
+  if (host.setStatus) host.setStatus(tr(STR_FRESHRSS_SYNC_LOADING_SUBSCRIPTIONS));
   if (host.paintProgress) host.paintProgress(true);
-  if (!client.fetchMetadata(metadata, auth, error)) {
+  if (!client.fetchMetadata(metadata, auth, error, host.shouldCancel)) {
     if (error.empty()) error = tr(STR_FETCH_FEED_FAILED);
+    return false;
+  }
+  if (host.shouldCancel && host.shouldCancel()) {
+    error = tr(STR_FETCH_FEED_FAILED);
     return false;
   }
 
@@ -51,7 +55,8 @@ bool runFreshRssSync(FreshRssSyncHost& host, std::string& error) {
     std::vector<uint32_t> changedKeys;
     changedKeys.reserve(SETTINGS.freshRssArticleLimit);
     const FreshRssSyncCursor* cursor = delta ? &previousCursor : nullptr;
-    if (host.setStatus) host.setStatus(delta ? "Incremental FreshRSS sync" : "Downloading and caching articles");
+    if (host.setStatus)
+      host.setStatus(delta ? tr(STR_FRESHRSS_SYNC_INCREMENTAL) : tr(STR_FRESHRSS_SYNC_DOWNLOADING));
     if (host.paintProgress) host.paintProgress(true);
     const bool fetched = client.fetchArticles(
         auth, SETTINGS.freshRssArticleLimit,
@@ -106,19 +111,26 @@ bool runFreshRssSync(FreshRssSyncHost& host, std::string& error) {
           host.progress.limit.store(limit);
           if (host.paintProgress) host.paintProgress(received == 0 || received == limit);
         },
-        cursor, &deltaUnsupported);
+        cursor, &deltaUnsupported, host.shouldCancel);
     if (!fetched || deltaInconsistent) {
+      LOG_ERR("FRSS", "sync aborted: fetch=%d deltaInconsistent=%d error=%s", fetched, deltaInconsistent,
+              error.c_str());
       writer.abort();
       return false;
     }
     if (delta && !writer.copyUnchangedFromCurrent(changedKeys)) {
+      LOG_ERR("FRSS", "sync aborted: failed to copy unchanged records forward");
       writer.abort();
       return false;
     }
-    if (host.setStatus) host.setStatus("Committing article cache");
+    if (host.setStatus) host.setStatus(tr(STR_FRESHRSS_SYNC_COMMITTING));
     if (host.paintProgress) host.paintProgress(true);
     writer.setSyncCursor(nextCursor);
-    return writer.commit();
+    if (!writer.commit()) {
+      LOG_ERR("FRSS", "sync aborted: snapshot commit failed");
+      return false;
+    }
+    return true;
   };
 
   FreshRssSyncCursor nextCursor;
@@ -132,7 +144,9 @@ bool runFreshRssSync(FreshRssSyncHost& host, std::string& error) {
   if (canDelta) {
     committed = performSnapshot(true, nextCursor, deltaUnsupported, deltaInconsistent);
     if (!committed && (deltaUnsupported || deltaInconsistent)) {
-      if (host.setStatus) host.setStatus("Rebuilding FreshRSS cache");
+      LOG_DBG("FRSS", "delta sync failed (unsupported=%d inconsistent=%d), falling back to full sync",
+              deltaUnsupported, deltaInconsistent);
+      if (host.setStatus) host.setStatus(tr(STR_FRESHRSS_SYNC_REBUILDING));
       if (host.paintProgress) host.paintProgress(true);
       nextCursor.modifiedMsec = 0;
       deltaUnsupported = false;

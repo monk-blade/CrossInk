@@ -41,8 +41,6 @@ class RssItemListActivity final : public Activity {
   std::vector<uint32_t> freshVisibleKeys;
   std::vector<uint32_t> freshUnavailableKeys;
   size_t freshPageStart = 0;
-  // Indices into items; filtering never copies titles or bodies.
-  std::vector<uint16_t> visibleItems;
   int selectorIndex = 0;
   bool consumeConfirm = false;
   bool consumeBack = false;

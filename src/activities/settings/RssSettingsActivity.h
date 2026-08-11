@@ -28,7 +28,7 @@ class RssSettingsActivity final : public Activity {
  private:
   static constexpr int VIEW_ROWS = 5;
   static constexpr int FONT_ROWS = 9;
-  static constexpr int CONTROL_ROWS = 5;
+  static constexpr int CONTROL_ROWS = 4;
   static constexpr int CACHE_ROWS = 2;
 
   const SdCardFontRegistry* registry_ = nullptr;

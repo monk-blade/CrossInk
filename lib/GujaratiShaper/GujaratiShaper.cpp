@@ -15,7 +15,13 @@ static inline bool isGujarati(uint32_t cp) {
   return (cp >= 0x0A80 && cp <= 0x0AFF) || (cp >= PUA_START && cp <= PUA_END);
 }
 
-static inline bool isGujaratiConsonant(uint32_t cp) { return cp >= 0x0A95 && cp <= 0x0AB9; }
+static inline bool isGujaratiConsonant(uint32_t cp) {
+  // U+0AF9 GUJARATI LETTER ZHA sits outside the main 0x0A95-0x0AB9 consonant
+  // block (Gujarati Unicode additions), but the shaping tables include rules
+  // keyed on it (see GujaratiShapingData.h) — without this it can't be a
+  // reph/subjoined-Ra base or take part in pre-base matra reordering.
+  return (cp >= 0x0A95 && cp <= 0x0AB9) || cp == 0x0AF9;
+}
 
 static inline bool isVirama(uint32_t cp) { return cp == 0x0ACD; }
 
@@ -31,10 +37,14 @@ static inline bool isRephBase(uint32_t cp) {
 }
 
 // Post-base vowel matras that stay in the same syllable as the consonant reph attaches to.
-// Pre-base matras (U+0ABF, U+0AC0) must be excluded — they are reordered before the
-// consonant cluster and must not extend the reph target (e.g. સંઘર્ષથી).
+// Only U+0ABF (i-matra) is pre-base and must be excluded — it is reordered
+// before the consonant cluster and must not extend the reph target (e.g.
+// સંઘર્ષથી). U+0AC0 (ii-matra) is post-base, like U+0ABE, despite visually
+// resembling U+0ABF; excluding it here (as an earlier version of this
+// function did) stopped the reph cluster one codepoint short whenever a word
+// ended in ii-matra after a reph-eligible tail.
 static inline bool isPostBaseVowelMatra(uint32_t cp) {
-  return cp == 0x0ABE || cp == 0x0AC1 || cp == 0x0AC2 || (cp >= 0x0AC3 && cp <= 0x0AC5) ||
+  return cp == 0x0ABE || cp == 0x0AC0 || cp == 0x0AC1 || cp == 0x0AC2 || (cp >= 0x0AC3 && cp <= 0x0AC5) ||
          cp == 0x0AC7 || cp == 0x0AC8 || cp == 0x0AC9 || cp == 0x0ACB || cp == 0x0ACC;
 }
 
@@ -252,81 +262,96 @@ size_t GujaratiShaper::shape(const char* input, size_t inputLen, char* output, s
   char* out = output;
   const char* outEnd = output + outputCap;
 
-  // Decode all codepoints into a flat array for lookahead
-  uint32_t cps[MAX_WORD_CPS];
-  size_t cpCount = 0;
+  // Each shaping pass below looks within a single MAX_WORD_CPS-codepoint
+  // window (conjunct/reph/matra-reorder rules never need more context than
+  // that — MAX_WORD_CPS already covers far more than a real Gujarati word).
+  // Callers are expected to split on whitespace before reaching this deep
+  // (see GujaratiIntegration::shapeWord / shapeLongUiString), so in practice
+  // this loop runs once. But shapeUiString() and other whole-string callers
+  // can still hand us more than MAX_WORD_CPS codepoints; looping here shapes
+  // the input in successive chunks instead of silently dropping everything
+  // past the first MAX_WORD_CPS codepoints. The only correctness cost is that
+  // a conjunct straddling a chunk boundary won't form — never observed with
+  // real text, and strictly better than the data loss it replaces.
+  while (p < end && out < outEnd) {
+    // Decode one chunk of codepoints into a flat array for lookahead
+    uint32_t cps[MAX_WORD_CPS];
+    size_t cpCount = 0;
 
-  while (p < end && cpCount < MAX_WORD_CPS) {
-    cps[cpCount++] = nextCodepoint(p, end);
-  }
-
-  reorderPreBaseMatras(cps, cpCount);
-
-  // Phase 1: Form conjuncts RIGHT-TO-LEFT within consonant clusters.
-  //
-  // In Indic shaping the "base" consonant is the rightmost in a cluster, so
-  // conjuncts must form from the right. Example: ક્ષ્ય (ka+virama+ssa+virama+ya)
-  //   Right-to-left: ssa+virama+ya -> ssya first, then ka+virama+ssya -> full form.
-  //   Left-to-right would wrongly grab ka+virama+ssa first, orphaning virama+ya.
-  //
-  // We repeatedly scan right-to-left for the rightmost 3-char C+virama+C match
-  // (or PUA+virama+C for triple+ stacking) and replace it, until no more form.
-  {
-    bool changed = true;
-    while (changed) {
-      changed = false;
-      for (int i = static_cast<int>(cpCount) - 3; i >= 0; i--) {
-        if (!isVirama(cps[i + 1])) continue;
-        if (!isGujarati(cps[i]) || !isGujarati(cps[i + 2])) continue;
-        uint32_t out = matchRule3(cps[i], cps[i + 1], cps[i + 2]);
-        if (out) {
-          cps[i] = out;
-          memmove(&cps[i + 1], &cps[i + 3], (cpCount - i - 3) * sizeof(uint32_t));
-          cpCount -= 2;
-          changed = true;
-          break;  // restart scan from right after each replacement
-        }
-      }
+    while (p < end && cpCount < MAX_WORD_CPS) {
+      cps[cpCount++] = nextCodepoint(p, end);
     }
-  }
 
-  repositionReph(cps, cpCount);
+    reorderPreBaseMatras(cps, cpCount);
 
-  applySubjoinedRa(cps, cpCount);
-
-  // Phase 2: Left-to-right rule application for remaining substitutions
-  // (half-forms, PUA+consonant chaining, etc.).
-  // Multi-pass needed because some rules chain (e.g., half-form + conjunct).
-  {
-    bool changed = true;
-    while (changed) {
-      changed = false;
-      uint32_t newCps[MAX_WORD_CPS];
-      size_t newCount = 0;
-      size_t pos = 0;
-
-      while (pos < cpCount) {
-        if (isGujarati(cps[pos])) {
-          uint32_t out_cp = tryMatch(cps, cpCount, pos);
-          if (out_cp) {
-            newCps[newCount++] = out_cp;
+    // Phase 1: Form conjuncts RIGHT-TO-LEFT within consonant clusters.
+    //
+    // In Indic shaping the "base" consonant is the rightmost in a cluster, so
+    // conjuncts must form from the right. Example: ક્ષ્ય (ka+virama+ssa+virama+ya)
+    //   Right-to-left: ssa+virama+ya -> ssya first, then ka+virama+ssya -> full form.
+    //   Left-to-right would wrongly grab ka+virama+ssa first, orphaning virama+ya.
+    //
+    // We repeatedly scan right-to-left for the rightmost 3-char C+virama+C match
+    // (or PUA+virama+C for triple+ stacking) and replace it, until no more form.
+    {
+      bool changed = true;
+      while (changed) {
+        changed = false;
+        for (int i = static_cast<int>(cpCount) - 3; i >= 0; i--) {
+          if (!isVirama(cps[i + 1])) continue;
+          if (!isGujarati(cps[i]) || !isGujarati(cps[i + 2])) continue;
+          uint32_t matched = matchRule3(cps[i], cps[i + 1], cps[i + 2]);
+          if (matched) {
+            cps[i] = matched;
+            memmove(&cps[i + 1], &cps[i + 3], (cpCount - i - 3) * sizeof(uint32_t));
+            cpCount -= 2;
             changed = true;
-            continue;
+            break;  // restart scan from right after each replacement
           }
         }
-        newCps[newCount++] = cps[pos++];
-      }
-
-      if (changed) {
-        memcpy(cps, newCps, newCount * sizeof(uint32_t));
-        cpCount = newCount;
       }
     }
-  }
 
-  // Encode shaped codepoints back to UTF-8
-  for (size_t i = 0; i < cpCount; i++) {
-    if (encodeCodepoint(cps[i], out, outEnd) == 0) break;
+    repositionReph(cps, cpCount);
+
+    applySubjoinedRa(cps, cpCount);
+
+    // Phase 2: Left-to-right rule application for remaining substitutions
+    // (half-forms, PUA+consonant chaining, etc.).
+    // Multi-pass needed because some rules chain (e.g., half-form + conjunct).
+    {
+      bool changed = true;
+      while (changed) {
+        changed = false;
+        uint32_t newCps[MAX_WORD_CPS];
+        size_t newCount = 0;
+        size_t pos = 0;
+
+        while (pos < cpCount) {
+          if (isGujarati(cps[pos])) {
+            uint32_t out_cp = tryMatch(cps, cpCount, pos);
+            if (out_cp) {
+              newCps[newCount++] = out_cp;
+              changed = true;
+              continue;
+            }
+          }
+          newCps[newCount++] = cps[pos++];
+        }
+
+        if (changed) {
+          memcpy(cps, newCps, newCount * sizeof(uint32_t));
+          cpCount = newCount;
+        }
+      }
+    }
+
+    // Encode this chunk's shaped codepoints back to UTF-8. Stop entirely if
+    // the output buffer runs out — same behavior as before chunking, just
+    // reachable from any chunk instead of only the first.
+    for (size_t i = 0; i < cpCount; i++) {
+      if (encodeCodepoint(cps[i], out, outEnd) == 0) return static_cast<size_t>(out - output);
+    }
   }
 
   return static_cast<size_t>(out - output);

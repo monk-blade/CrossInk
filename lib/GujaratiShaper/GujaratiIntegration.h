@@ -23,20 +23,20 @@ void shapeSanitizedWord(std::string& word);
 
 /**
  * Shape a short UI string in place (status bar, chapter list, etc.).
- * Delegates to GujaratiShaper::shape() directly over the whole string, whose
- * codepoint buffer is sized for roughly one line (MAX_WORD_CPS in
- * GujaratiShaper.cpp) — longer input is silently truncated. Safe for the
- * short, single-line strings this is meant for; use shapeLongUiString() for
- * anything that isn't bounded to a short phrase (e.g. an article body).
+ * Splits on whitespace and shapes each word individually, the same per-word
+ * approach ParsedText uses at EPUB parse time, so no codepoint is dropped
+ * regardless of string length. Prefer this name for single-line labels;
+ * shapeLongUiString() is an identical implementation kept as a distinct name
+ * for multi-paragraph callers (e.g. an RSS article body) where "long" reads
+ * more clearly at the call site.
  */
 void shapeUiString(std::string& text);
 
 /**
  * Shape a UI string of unbounded length in place — a multi-sentence or
  * multi-paragraph block (e.g. an RSS article body) rather than a short
- * label. Splits on whitespace and shapes each word individually via
- * shapeWord(), the same per-word approach ParsedText uses at EPUB parse
- * time, so it isn't subject to shapeUiString()'s whole-string length limit.
+ * label. Splits on whitespace and shapes each word individually, same as
+ * shapeUiString().
  */
 void shapeLongUiString(std::string& text);
 

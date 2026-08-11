@@ -80,7 +80,8 @@ GujaratiIntegration::shapeWord(word);
 
 In `lib/Epub/Epub/Section.cpp`:
 
-- Increment `SECTION_FILE_VERSION` (currently **47** for this implementation).
+- Increment `SECTION_FILE_VERSION` from whatever it currently is in your tree
+  (check the constant directly — this doc will drift out of sync with it).
 - Add a one-line changelog comment (v35+ history documents Gujarati bumps).
 - Document the bump in `docs/file-formats.md`.
 
@@ -100,18 +101,40 @@ Search the CrossPoint tree for `utf8IsGujarati` to find the exact blocks to cher
 
 ### 5. Font pipeline (required)
 
+**This repo's actual pipeline does not match a generic `sd-fonts.yaml` /
+`build-sd-fonts.py` integration** — there is no `pua_mapping` key in
+`lib/EpdFont/scripts/sd-fonts.yaml` and `build-sd-fonts.py` never references
+PUA mapping at all. Reading pipeline (via `Makefile:130-183`, targets
+`generate-fonts` / `generate-rss-font`) instead shells out to **out-of-tree**
+tooling that is not part of this checkout:
+
+| Makefile variable | Points at |
+|---|---|
+| `FONT_CATALOG` | a `gujarati-fonts.json` catalog (external) |
+| `FONT_BUILDER` | `build-gujarati-fonts.py` (external) |
+| `RSS_FONT_BUILDER` | `build-rss-list-font.py` (external) |
+| `FALLBACK_REGULAR` / `FALLBACK_BOLD` | a local Noto Serif Gujarati checkout |
+
+`fontconvert_sdcard.py` in this repo *is* present and does support
+`--pua-mapping` and a `gujarati` interval preset (`0x0A80–0x0AFF`) — those
+pieces of the checklist below are accurate — but nothing in-tree drives it
+with a Gujarati PUA mapping automatically; the external `FONT_BUILDER`/
+`RSS_FONT_BUILDER` scripts do that.
+
 | File | Change |
 |------|--------|
-| `lib/EpdFont/scripts/sd-fonts.yaml` | Add `NotoSerifGujarati` family with `pua_mapping: GujaratiShaper/scripts/pua_mapping.json` |
 | `lib/EpdFont/scripts/fontconvert_sdcard.py` | `gujarati` interval preset (`0x0A80–0x0AFF`), `--pua-mapping`, sorted PUA intervals |
-| `lib/EpdFont/scripts/build-sd-fonts.py` | Pass `pua_mapping` through to fontconvert |
 
-Build fonts:
+Build fonts (this repo, reproducible only if you have the external tooling above):
 
 ```bash
-pip install freetype-py fonttools pyyaml
-python3 lib/EpdFont/scripts/build-sd-fonts.py --only NotoSerifGujarati
+make prepare-fonts    # requires FONT_CATALOG, FONT_BUILDER, FALLBACK_REGULAR/BOLD env vars
+make generate-rss-font
 ```
+
+If you are porting to a fork that uses the generic `sd-fonts.yaml` /
+`build-sd-fonts.py` pipeline instead, wire `pua_mapping` through there per the
+original design intent — that path is not exercised by this checkout.
 
 ### 6. UI shaping hooks (recommended)
 

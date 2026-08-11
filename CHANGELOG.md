@@ -1,9 +1,26 @@
 ## [Unreleased]
 
+### Added
+
+- Gujarati text rendering: EPUB books and UI labels containing Gujarati now shape conjuncts, half-forms, reph, and pre-base matras correctly instead of rendering isolated base glyphs.
+- FreshRSS reader: browse subscriptions and categories, sync articles for offline reading, and read, star, and queue articles from a FreshRSS server, all without any network access from the article reader itself.
+
 ### Fixed
 
 - Book titles and authors in scripts that need an SD-card font (such as Gujarati) no longer render as diamond placeholders on the Home screen when the same screen also draws text in a built-in font.
 - Book titles and authors on the Recent Books screen now render correctly in scripts that need an SD-card font, instead of showing diamond placeholders for characters the previously drawn screen did not already use.
+- The RSS feed list, RSS article list, EPUB status bar, and chapter selection screens no longer show placeholder glyphs for Gujarati text on their first paint.
+- Very long titles or labels containing Gujarati text no longer lose characters past roughly the first line's worth of text.
+- Opening a cached FreshRSS article can no longer show the wrong article after a delta sync or cache cleanup reused the same on-disk position for a different article.
+- A FreshRSS delta sync that fails because of a dropped network connection no longer triggers an unnecessary full re-download of the article cache.
+- Marking FreshRSS articles as read no longer causes older articles to reappear as unread once more than 200 articles have been read, when the FreshRSS article limit is set above 200.
+- FreshRSS articles, subscriptions, and category ids longer than the internal size limit are now trimmed instead of silently dropping the whole article, subscription, or tag record they belong to.
+- Gujarati reph now correctly forms before the letter ZHA (U+0AF9) and correctly extends through a trailing ii-matra (U+0AC0), instead of leaving RA+virama undissolved or placing reph one character too early.
+- Text measurement for Gujarati on a built-in (non-SD) font no longer counts the zero-advance width of reph/subjoined-Ra/anusvara marks, so measured and drawn widths agree.
+
+### Removed
+
+- The unused direct RSS/Atom feed path (`feeds.json`, XML parsing) and its "Refresh Button" side-button setting — FreshRSS is now the only RSS backend, matching how the RSS reader has worked since it shipped.
 
 ## [v1.5.0] - 2026-08-08
 

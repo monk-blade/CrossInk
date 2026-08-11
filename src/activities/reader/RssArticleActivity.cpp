@@ -11,6 +11,7 @@
 #include <array>
 #include <cstring>
 #include <limits>
+#include <optional>
 
 #include "CrossPointSettings.h"
 #include "FreshRssCache.h"
@@ -80,10 +81,9 @@ void RssArticleActivity::onEnter() {
 
 void RssArticleActivity::loadBody() {
   bool complete = false;
-  const bool loaded = feed.isFreshRss
-                          ? (item.cacheOffset != 0 ? FreshRssCache::loadItemBodyByOffset(item.cacheOffset, item.body, complete)
-                                                   : FreshRssCache::loadItemBody(item.key, item.body, complete))
-                                     : RssItemCache::loadItemBody(feed.url, item.key, item.body, complete);
+  const bool loaded = item.cacheOffset != 0
+                          ? FreshRssCache::loadItemBodyByOffset(item.cacheOffset, item.key, item.body, complete)
+                          : FreshRssCache::loadItemBody(item.key, item.body, complete);
   if (!loaded) {
     cacheError = true;
     item.body.clear();
@@ -463,14 +463,21 @@ void RssArticleActivity::render(RenderLock&&) {
   std::string statusTitle = item.title;
   if (RSS_ITEM_STATE.isStarred(feed.url, item.key)) statusTitle += " *";
   if (RSS_ITEM_STATE.isQueued(feed.url, item.key)) statusTitle += " Q";
+  // The prewarm scope must stay alive until after GUI.drawStatusBar() below
+  // draws the real, positioned title: its destructor clears the SD font's
+  // prewarmed glyph cache (see FontCacheManager::PrewarmScope), so ending the
+  // scope here would discard the batch-loaded glyphs before drawStatusBar
+  // ever draws them, falling back to the small on-demand overflow cache and
+  // producing tofu for the shaped Gujarati title.
+  std::optional<FontCacheManager::PrewarmScope> statusScope;
   if (fcm && GujaratiIntegration::containsGujarati(statusTitle)) {
     std::string shapedStatus = statusTitle;
     GujaratiIntegration::shapeUiString(shapedStatus);
     // Status chrome uses SMALL_FONT_ID; Gujarati routes to the size-matched SD
     // fallback. A dedicated scan pass records the resolved SD font id for prewarm.
-    auto statusScope = fcm->createPrewarmScope();
+    statusScope.emplace(fcm->createPrewarmScope());
     renderer.drawText(SMALL_FONT_ID, 0, 0, shapedStatus.c_str(), true, EpdFontFamily::REGULAR);
-    statusScope.endScanAndPrewarm();
+    statusScope->endScanAndPrewarm();
   }
   GUI.drawStatusBar(renderer, totalPages > 0 ? static_cast<float>(currentPage + 1) / totalPages : 1.0f, currentPage + 1,
                     totalPages, statusTitle);

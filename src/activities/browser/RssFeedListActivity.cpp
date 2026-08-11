@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <optional>
 
 #include "CrossPointSettings.h"
 #include "FreshRssCache.h"
@@ -19,15 +20,16 @@
 #include "fontIds.h"
 
 namespace {
-constexpr const char* DASHBOARD_LABELS[] = {
-    "All Articles", "Unread Articles", "Starred Articles", "Reading Queue", "Categories", "Subscriptions"};
 constexpr unsigned long SYNC_PROGRESS_PAINT_MS = 250;
 
 RssFeed makeFreshFeed(const FreshRssNavigationEntry& entry) {
   RssFeed feed;
-  feed.name = entry.label;
+  // FreshRssCache's synthetic Uncategorized entry carries an internal,
+  // untranslated placeholder label — the UI is the layer that owns i18n, so
+  // substitute the translated string here rather than baking English into
+  // the cache module (see FreshRssCache::loadNavigation).
+  feed.name = entry.kind == FreshRssFilterKind::Uncategorized ? tr(STR_FRESHRSS_UNCATEGORIZED) : entry.label;
   feed.url = "freshrss";
-  feed.isFreshRss = true;
   feed.freshFilter = entry.kind;
   feed.freshId = entry.id;
   feed.freshUnreadOnly = entry.unreadOnly;
@@ -72,10 +74,10 @@ void RssFeedListActivity::loadDashboard() {
   std::vector<uint32_t> keys;
   const bool hasSnapshot = FreshRssCache::loadKeys(FreshRssFilterKind::All, "", keys);
   if (!hasSnapshot) keys.clear();
-  FreshRssNavigationEntry all{FreshRssFilterKind::All, "", "All Articles"};
+  FreshRssNavigationEntry all{FreshRssFilterKind::All, "", tr(STR_FRESHRSS_ALL_ARTICLES)};
   all.articleCount = keys.size();
   all.unreadCount = RSS_ITEM_STATE.countUnread("freshrss", keys);
-  FreshRssNavigationEntry unread{FreshRssFilterKind::All, "", "Unread Articles", true};
+  FreshRssNavigationEntry unread{FreshRssFilterKind::All, "", tr(STR_FRESHRSS_UNREAD), true};
   unread.articleCount = all.unreadCount;
   unread.unreadCount = unread.articleCount;
   size_t starred = 0;
@@ -87,7 +89,6 @@ void RssFeedListActivity::loadDashboard() {
   RssFeed refreshEntry;
   refreshEntry.name = refreshMenuLabel.empty() ? tr(STR_REFRESH) : refreshMenuLabel;
   refreshEntry.url = "freshrss";
-  refreshEntry.isFreshRss = true;
   entries.push_back(std::move(refreshEntry));
 
   entries.push_back(makeFreshFeed(all));
@@ -95,16 +96,14 @@ void RssFeedListActivity::loadDashboard() {
   unreadFeed.freshLocalFilter = RssLocalFilter::Unread;
   entries.push_back(std::move(unreadFeed));
   RssFeed starredFeed;
-  starredFeed.name = DASHBOARD_LABELS[2];
+  starredFeed.name = tr(STR_FRESHRSS_STARRED_ARTICLES);
   starredFeed.url = "freshrss";
-  starredFeed.isFreshRss = true;
   starredFeed.freshLocalFilter = RssLocalFilter::Starred;
   starredFeed.articleCount = starred;
   entries.push_back(std::move(starredFeed));
   RssFeed queuedFeed;
-  queuedFeed.name = DASHBOARD_LABELS[3];
+  queuedFeed.name = tr(STR_FRESHRSS_READING_QUEUE);
   queuedFeed.url = "freshrss";
-  queuedFeed.isFreshRss = true;
   queuedFeed.freshLocalFilter = RssLocalFilter::Queued;
   queuedFeed.articleCount = queued;
   entries.push_back(std::move(queuedFeed));
@@ -117,15 +116,13 @@ void RssFeedListActivity::loadDashboard() {
     if (item.kind == FreshRssFilterKind::Subscription) ++subscriptionCount;
   }
   RssFeed categories;
-  categories.name = DASHBOARD_LABELS[4];
+  categories.name = tr(STR_FRESHRSS_CATEGORIES);
   categories.url = "freshrss";
-  categories.isFreshRss = true;
   categories.articleCount = categoryCount;
   entries.push_back(std::move(categories));
   RssFeed subscriptions;
-  subscriptions.name = DASHBOARD_LABELS[5];
+  subscriptions.name = tr(STR_FRESHRSS_SUBSCRIPTIONS);
   subscriptions.url = "freshrss";
-  subscriptions.isFreshRss = true;
   subscriptions.articleCount = subscriptionCount;
   entries.push_back(std::move(subscriptions));
 
@@ -255,6 +252,15 @@ void RssFeedListActivity::onWifiSelectionComplete(const bool connected) {
 }
 
 void RssFeedListActivity::performSync() {
+  // host.shouldCancel is intentionally left unset: the network layer
+  // (HttpDownloader::fetchUrlWithHeaders/postForm) now honors it end to end,
+  // but wiring a live Back-button poll here needs mappedInput.update() called
+  // from inside this blocking call — off the normal per-frame cadence — which
+  // needs hardware verification of its interaction with wasPressed/
+  // wasReleased edge-tracking before it's safe to enable. Until then, Back
+  // during LOADING/CHECK_WIFI (see loop()) can't interrupt an in-flight
+  // request; it only resets local state and disconnects once the call
+  // returns.
   FreshRssSyncHost host{
       syncProgress,
       [this](const char* message) { statusMessage = message; },
@@ -327,7 +333,8 @@ size_t RssFeedListActivity::itemCount() const { return entries.size(); }
 std::string RssFeedListActivity::headerText() const {
   if (view == View::DASHBOARD) return tr(STR_RSS_FEEDS);
   if (view == View::CATEGORIES)
-    return dashboardAction == DashboardAction::SUBSCRIPTIONS ? "Select Category" : "Categories";
+    return dashboardAction == DashboardAction::SUBSCRIPTIONS ? tr(STR_FRESHRSS_SELECT_CATEGORY)
+                                                              : tr(STR_FRESHRSS_CATEGORIES);
   return selectedCategoryLabel;
 }
 
@@ -423,7 +430,7 @@ void RssFeedListActivity::render(RenderLock&&) {
     const size_t progressCurrent = std::min(syncProgress.received.load(), progressTotal);
     const int progressY = pageHeight / 2 + 18;
     const char* visibleStatus =
-        syncProgress.processingArticle.load() ? "Processing article" : statusMessage.c_str();
+        syncProgress.processingArticle.load() ? tr(STR_FRESHRSS_PROCESSING_ARTICLE) : statusMessage.c_str();
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - (progressTotal > 0 ? 18 : 0), visibleStatus);
     if (progressTotal > 0) {
       GUI.drawProgressBar(renderer, Rect{50, progressY, renderer.getScreenWidth() - 100, 20}, progressCurrent,
@@ -450,10 +457,17 @@ void RssFeedListActivity::render(RenderLock&&) {
   const int contentHeight = screen.height - contentTop - metrics.verticalSpacing;
   const int totalItems = static_cast<int>(itemCount());
   if (totalItems == 0) {
-    const char* message = view == View::SUBSCRIPTIONS ? "No feeds with cached articles in this category"
-                                                        : "No cached articles. Select Refresh to sync.";
+    const char* message = view == View::SUBSCRIPTIONS ? tr(STR_FRESHRSS_NO_CACHED_SUBSCRIPTIONS)
+                                                        : tr(STR_FRESHRSS_NO_CACHED_ARTICLES);
     renderer.drawCenteredText(UI_10_FONT_ID, contentTop + contentHeight / 2, message);
   } else {
+    // The prewarm scope must stay alive until after GUI.drawList() below draws
+    // the real, positioned text: its destructor clears the SD font's prewarmed
+    // glyph cache (see FontCacheManager::PrewarmScope), so ending the scope
+    // here would discard the batch-loaded glyphs before drawList ever draws
+    // them, falling back to the small on-demand overflow cache and producing
+    // tofu for Gujarati/CJK entry names.
+    std::optional<FontCacheManager::PrewarmScope> prewarmScope;
     if (view == View::DASHBOARD && !entries.empty()) {
       auto* fcm = renderer.getFontCacheManager();
       if (fcm) {
@@ -462,9 +476,9 @@ void RssFeedListActivity::render(RenderLock&&) {
           names += entry.name;
           names += '\n';
         }
-        auto scope = fcm->createPrewarmScope();
+        prewarmScope.emplace(fcm->createPrewarmScope());
         renderer.drawText(UI_10_FONT_ID, 0, 0, names.c_str(), true, EpdFontFamily::REGULAR);
-        scope.endScanAndPrewarm();
+        prewarmScope->endScanAndPrewarm();
       }
     }
     GUI.drawList(

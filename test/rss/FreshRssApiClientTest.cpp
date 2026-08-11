@@ -160,3 +160,42 @@ TEST_F(FreshRssApiClientTest, RequestsModifiedSinceCursorWithoutMutationEndpoint
   EXPECT_EQ(articles[0].modifiedMsec, 1785751300000ULL);
   EXPECT_FALSE(unsupported);
 }
+
+// Regression test: a transport-level failure (DNS/timeout/TLS/connection
+// reset — modeled here by the GET handler simply returning false without
+// emitting a response) must not be mistaken for "the server ignored ot=".
+// Misclassifying it used to trigger a full re-download stacked on top of a
+// connection that had just dropped.
+TEST_F(FreshRssApiClientTest, TransportFailureDuringDeltaDoesNotReportDeltaUnsupported) {
+  HttpDownloader::getHandler = [](const HttpDownloader::Request&, const HttpDownloader::DataCallback&) {
+    return false;  // request never completes
+  };
+  FreshRssApiClient client(account());
+  FreshRssSyncCursor cursor;
+  cursor.modifiedMsec = 1785751200000ULL;
+  cursor.valid = true;
+  std::string error;
+  bool unsupported = false;
+  EXPECT_FALSE(client.fetchArticles(
+      "auth", 200, [](FreshRssArticle&&) { return true; }, error, {}, &cursor, &unsupported));
+  EXPECT_FALSE(unsupported);
+}
+
+// A response that the HTTP layer delivered in full but that fails to parse
+// is the closest available signal to "the server responded oddly to ot=";
+// it should still be reported through deltaUnsupported so the caller can
+// fall back to a full sync.
+TEST_F(FreshRssApiClientTest, MalformedResponseDuringDeltaReportsDeltaUnsupported) {
+  HttpDownloader::getHandler = [](const HttpDownloader::Request&, const HttpDownloader::DataCallback& callback) {
+    return emit(callback, "{not-json");
+  };
+  FreshRssApiClient client(account());
+  FreshRssSyncCursor cursor;
+  cursor.modifiedMsec = 1785751200000ULL;
+  cursor.valid = true;
+  std::string error;
+  bool unsupported = false;
+  EXPECT_FALSE(client.fetchArticles(
+      "auth", 200, [](FreshRssArticle&&) { return true; }, error, {}, &cursor, &unsupported));
+  EXPECT_TRUE(unsupported);
+}

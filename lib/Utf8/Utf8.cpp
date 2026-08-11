@@ -218,7 +218,27 @@ void utf8AppendCodepoint(uint32_t cp, std::string& out) {
   }
 }
 
+namespace {
+// True when every codepoint in `text` decodes cleanly (no stray continuation
+// byte or invalid lead byte) and none of them is a literal U+FFFD — i.e.
+// sanitizing would be a no-op. This lets the common case (valid UTF-8, which
+// is the overwhelming majority of ingested EPUB/RSS text and every UI label
+// that isn't Gujarati) skip the allocate-and-rebuild pass below. Mirrors the
+// fast-path pattern in utf8ComposeNfc() above.
+bool utf8IsAlreadyClean(const std::string& text) {
+  const auto* cursor = reinterpret_cast<const unsigned char*>(text.c_str());
+  while (*cursor != 0) {
+    const auto* before = cursor;
+    const uint32_t codepoint = utf8NextCodepoint(&cursor);
+    if (cursor == before) return false;  // stray continuation byte / invalid lead byte
+    if (codepoint == 0 || codepoint == REPLACEMENT_GLYPH) return false;
+  }
+  return true;
+}
+}  // namespace
+
 void utf8SanitizeInPlace(std::string& text) {
+  if (utf8IsAlreadyClean(text)) return;
   std::string sanitized;
   sanitized.reserve(text.size());
   const auto* cursor = reinterpret_cast<const unsigned char*>(text.c_str());

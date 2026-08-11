@@ -30,8 +30,8 @@ constexpr StrId FONT_IDS[] = {StrId::STR_RSS_FONT_FAMILY, StrId::STR_RSS_FONT_SI
                               StrId::STR_RSS_LIST_FONT_FAMILY, StrId::STR_RSS_LIST_FONT_SIZE,
                               StrId::STR_LINE_SPACING, StrId::STR_RSS_PARAGRAPH_SPACING,
                               StrId::STR_RSS_PARAGRAPH_INDENT, StrId::STR_PARA_ALIGNMENT, StrId::STR_SCREEN_MARGIN};
-constexpr StrId CONTROL_IDS[] = {StrId::STR_RSS_REFRESH_BUTTON, StrId::STR_RSS_MARK_READ_TIMING,
-                                 StrId::STR_RSS_END_ACTION, StrId::STR_RSS_BUTTON_HINTS, StrId::STR_RSS_STAR_ACTION};
+constexpr StrId CONTROL_IDS[] = {StrId::STR_RSS_MARK_READ_TIMING, StrId::STR_RSS_END_ACTION,
+                                 StrId::STR_RSS_BUTTON_HINTS, StrId::STR_RSS_STAR_ACTION};
 constexpr StrId CACHE_IDS[] = {StrId::STR_RSS_CACHE_STATS, StrId::STR_RSS_CLEAR_CACHE};
 
 constexpr StrId FILTER_VALUES[] = {StrId::STR_RSS_ALL_ITEMS, StrId::STR_RSS_UNREAD_ONLY};
@@ -41,7 +41,6 @@ constexpr StrId ON_OFF_VALUES[] = {StrId::STR_STATE_OFF, StrId::STR_STATE_ON};
 constexpr StrId LINE_VALUES[] = {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE};
 constexpr StrId ALIGN_VALUES[] = {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT,
                                   StrId::STR_BOOK_S_STYLE};
-constexpr StrId REFRESH_VALUES[] = {StrId::STR_DIR_LEFT, StrId::STR_DIR_RIGHT, StrId::STR_RSS_REFRESH_DISABLED};
 constexpr StrId MARK_VALUES[] = {StrId::STR_RSS_ON_OPEN, StrId::STR_RSS_ON_LAST_PAGE};
 constexpr StrId END_VALUES[] = {StrId::STR_RSS_RETURN_TO_LIST, StrId::STR_RSS_NEXT_UNREAD};
 constexpr StrId STAR_VALUES[] = {StrId::STR_RSS_STAR_DISABLED, StrId::STR_RSS_STAR_RIGHT, StrId::STR_RSS_STAR_LONG_OPEN};
@@ -193,14 +192,12 @@ std::string RssSettingsActivity::rowValue(const int row) const {
     case Tab::Controls:
       switch (row) {
         case 0:
-          return optionText(REFRESH_VALUES, SETTINGS.rssRefreshButton);
-        case 1:
           return optionText(MARK_VALUES, SETTINGS.rssMarkReadTiming);
-        case 2:
+        case 1:
           return optionText(END_VALUES, SETTINGS.rssArticleEndAction);
-        case 3:
+        case 2:
           return optionText(ON_OFF_VALUES, SETTINGS.rssShowButtonHints);
-        case 4:
+        case 3:
           return optionText(STAR_VALUES, SETTINGS.rssStarAction);
         default:
           return {};
@@ -340,15 +337,13 @@ void RssSettingsActivity::activateRow(const int row) {
       }
       return;
     case Tab::Controls:
-      if (row == 0) show(StrId::STR_RSS_REFRESH_BUTTON, REFRESH_VALUES, 3, SETTINGS.rssRefreshButton,
-                         [](const int value) { SETTINGS.rssRefreshButton = value; });
-      else if (row == 1) show(StrId::STR_RSS_MARK_READ_TIMING, MARK_VALUES, 2, SETTINGS.rssMarkReadTiming,
-                              [](const int value) { SETTINGS.rssMarkReadTiming = value; });
-      else if (row == 2) show(StrId::STR_RSS_END_ACTION, END_VALUES, 2, SETTINGS.rssArticleEndAction,
+      if (row == 0) show(StrId::STR_RSS_MARK_READ_TIMING, MARK_VALUES, 2, SETTINGS.rssMarkReadTiming,
+                         [](const int value) { SETTINGS.rssMarkReadTiming = value; });
+      else if (row == 1) show(StrId::STR_RSS_END_ACTION, END_VALUES, 2, SETTINGS.rssArticleEndAction,
                               [](const int value) { SETTINGS.rssArticleEndAction = value; });
-      else if (row == 3) show(StrId::STR_RSS_BUTTON_HINTS, ON_OFF_VALUES, 2, SETTINGS.rssShowButtonHints,
+      else if (row == 2) show(StrId::STR_RSS_BUTTON_HINTS, ON_OFF_VALUES, 2, SETTINGS.rssShowButtonHints,
                               [](const int value) { SETTINGS.rssShowButtonHints = value; });
-      else if (row == 4) show(StrId::STR_RSS_STAR_ACTION, STAR_VALUES, 3, SETTINGS.rssStarAction,
+      else if (row == 3) show(StrId::STR_RSS_STAR_ACTION, STAR_VALUES, 3, SETTINGS.rssStarAction,
                               [](const int value) { SETTINGS.rssStarAction = value; });
       return;
     case Tab::Cache:

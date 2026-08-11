@@ -75,9 +75,17 @@ TEST_F(FreshRssCacheTest, RoundTripMetadataBodiesAndFilters) {
   EXPECT_GT(index[0].recordOffset, 0U);
   RichText offsetBody;
   bool offsetComplete = false;
-  ASSERT_TRUE(FreshRssCache::loadItemBodyByOffset(index[1].recordOffset, offsetBody, offsetComplete));
+  ASSERT_TRUE(FreshRssCache::loadItemBodyByOffset(index[1].recordOffset, index[1].key, offsetBody, offsetComplete));
   EXPECT_FALSE(offsetComplete);
   EXPECT_EQ(offsetBody[0].words[0].text, "Gujarati second");
+
+  // A stale offset paired with the wrong key must not silently return
+  // whatever record now lives at that offset (regression for the bug where
+  // only the offset was checked).
+  RichText mismatchedBody;
+  bool mismatchedComplete = false;
+  EXPECT_FALSE(FreshRssCache::loadItemBodyByOffset(index[1].recordOffset, index[1].key + 1, mismatchedBody,
+                                                    mismatchedComplete));
   EXPECT_GT(FreshRssCache::stats().indexBytes, 0U);
 
   std::vector<CachedRssItem> items;

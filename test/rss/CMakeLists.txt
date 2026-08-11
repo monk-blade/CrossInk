@@ -1,6 +1,19 @@
-add_executable(RssPolicyTest RssPolicyTest.cpp)
-target_link_libraries(RssPolicyTest PRIVATE crosspoint_test_common gtest_main)
-gtest_discover_tests(RssPolicyTest)
+add_executable(RssItemFilterTest RssItemFilterTest.cpp)
+target_link_libraries(RssItemFilterTest PRIVATE crosspoint_test_common gtest_main)
+gtest_discover_tests(RssItemFilterTest)
+
+add_executable(HtmlRichTextTest
+  HtmlRichTextTest.cpp
+  ${REPO_ROOT}/lib/RssParser/HtmlRichText.cpp
+  ${REPO_ROOT}/lib/Utf8/Utf8.cpp
+)
+target_include_directories(HtmlRichTextTest PRIVATE
+  ${REPO_ROOT}/lib/RssParser
+  ${REPO_ROOT}/lib/Utf8
+  ${REPO_ROOT}/lib/EpdFont
+)
+target_link_libraries(HtmlRichTextTest PRIVATE crosspoint_test_common gtest_main)
+gtest_discover_tests(HtmlRichTextTest)
 
 add_executable(RssItemStateStoreTest
   RssItemStateStoreTest.cpp
@@ -14,19 +27,6 @@ target_include_directories(RssItemStateStoreTest PRIVATE
 )
 target_link_libraries(RssItemStateStoreTest PRIVATE crosspoint_test_common gtest_main)
 gtest_discover_tests(RssItemStateStoreTest)
-
-find_package(EXPAT REQUIRED)
-add_executable(RssParserTest
-  RssParserTest.cpp
-  ${REPO_ROOT}/lib/RssParser/RssParser.cpp
-)
-target_include_directories(RssParserTest PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/stubs
-  ${REPO_ROOT}/lib/RssParser
-  ${REPO_ROOT}/lib/XmlParserUtils
-)
-target_link_libraries(RssParserTest PRIVATE crosspoint_test_common gtest_main EXPAT::EXPAT)
-gtest_discover_tests(RssParserTest)
 
 add_executable(RssItemCacheTest
   RssItemCacheTest.cpp

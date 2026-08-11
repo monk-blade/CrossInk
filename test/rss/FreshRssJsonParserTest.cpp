@@ -127,3 +127,24 @@ TEST(FreshRssJsonParser, SinkFailureIsReported) {
   parser.feed(reinterpret_cast<const uint8_t*>(json.data()), json.size());
   EXPECT_FALSE(parser.finish());
 }
+
+// Regression test: an id field longer than the internal MAX_ID_CHARS bound
+// (256 bytes) used to be dropped entirely rather than truncated, which then
+// tripped the "id is empty" check and failed the whole document — one
+// oversized field aborting every article in the page, not just itself.
+TEST(FreshRssJsonParser, OverlongIdIsTruncatedNotDropped) {
+  const std::string longId(300, 'x');
+  const std::string json = R"({"items":[{"id":")" + longId + R"(","title":"Kept"},{"id":"normal","title":"Also kept"}]})";
+  std::vector<FreshRssArticle> articles;
+  FreshRssJsonParser parser(FreshRssJsonParser::Document::Articles,
+                            [&articles](FreshRssArticle&& article) {
+                              articles.push_back(std::move(article));
+                              return true;
+                            });
+  parser.feed(reinterpret_cast<const uint8_t*>(json.data()), json.size());
+  ASSERT_TRUE(parser.finish());
+  ASSERT_EQ(articles.size(), 2u);
+  EXPECT_EQ(articles[0].id.size(), 256u);
+  EXPECT_EQ(articles[0].id, longId.substr(0, 256));
+  EXPECT_EQ(articles[1].id, "normal");
+}

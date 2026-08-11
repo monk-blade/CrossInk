@@ -15,8 +15,23 @@ constexpr uint8_t RSS_STATE_FILE_VERSION_WITH_STARS = 2;
 constexpr const char* STATE_DIR = "/.crosspoint/rss";
 constexpr const char* STATE_PATH = "/.crosspoint/rss/state.bin";
 constexpr const char* STATE_TMP_PATH = "/.crosspoint/rss/state.bin.tmp";
-constexpr uint32_t MAX_PERSISTED_KEYS_PER_FEED = 200;
+constexpr const char* FRESHRSS_FEED_URL = "freshrss";
+// The persisted-count sanity check on load must accept the largest cap any
+// feed can have — currently the FreshRSS pseudo-feed's, which scales with
+// the injected freshRssArticleLimit (see RssItemStateStore::setFreshRssArticleLimit).
+constexpr uint32_t MAX_PERSISTED_KEYS_PER_FEED = RssItemStateStore::MAX_FRESHRSS_READ_KEYS;
 }  // namespace
+
+void RssItemStateStore::setFreshRssArticleLimit(const size_t limit) {
+  // Clamp defensively in case a stale/foreign settings value slips through —
+  // never shrink below the ordinary per-feed cap or grow past what the
+  // FreshRSS cache itself can ever hold.
+  freshRssArticleLimit = std::min<size_t>(std::max<size_t>(limit, MAX_READ_KEYS_PER_FEED), MAX_FRESHRSS_READ_KEYS);
+}
+
+size_t RssItemStateStore::maxReadKeysForFeed(const std::string& feedUrl) const {
+  return feedUrl == FRESHRSS_FEED_URL ? freshRssArticleLimit : MAX_READ_KEYS_PER_FEED;
+}
 
 RssItemStateStore& RssItemStateStore::getInstance() {
   static RssItemStateStore instance;
@@ -51,6 +66,7 @@ void RssItemStateStore::load() {
   for (uint32_t i = 0; i < feedCount && i < MAX_FEEDS_TRACKED; ++i) {
     std::string feedUrl;
     serialization::readString(f, feedUrl);
+    const size_t feedCap = maxReadKeysForFeed(feedUrl);
     FeedState state;
     uint32_t readKeyCount = 0;
     serialization::readPod(f, readKeyCount);
@@ -58,11 +74,11 @@ void RssItemStateStore::load() {
       LOG_DBG("RSS", "state.bin read-key count too large (%lu), discarding", static_cast<unsigned long>(readKeyCount));
       return;
     }
-    state.readKeys.reserve(readKeyCount);
+    state.readKeys.reserve(std::min<uint32_t>(readKeyCount, static_cast<uint32_t>(feedCap)));
     for (uint32_t k = 0; k < readKeyCount; ++k) {
       uint32_t key = 0;
       serialization::readPod(f, key);
-      if (state.readKeys.size() < MAX_READ_KEYS_PER_FEED) state.readKeys.push_back(key);
+      if (state.readKeys.size() < feedCap) state.readKeys.push_back(key);
     }
     if (version >= RSS_STATE_FILE_VERSION_WITH_STARS) {
       uint32_t starredKeyCount = 0;
@@ -71,11 +87,11 @@ void RssItemStateStore::load() {
         LOG_DBG("RSS", "state.bin star-key count too large (%lu), discarding", static_cast<unsigned long>(starredKeyCount));
         return;
       }
-      state.starredKeys.reserve(starredKeyCount);
+      state.starredKeys.reserve(std::min<uint32_t>(starredKeyCount, static_cast<uint32_t>(feedCap)));
       for (uint32_t k = 0; k < starredKeyCount; ++k) {
         uint32_t key = 0;
         serialization::readPod(f, key);
-        if (state.starredKeys.size() < MAX_READ_KEYS_PER_FEED) state.starredKeys.push_back(key);
+        if (state.starredKeys.size() < feedCap) state.starredKeys.push_back(key);
       }
     }
     if (version >= RSS_STATE_FILE_VERSION) {
@@ -153,7 +169,7 @@ void RssItemStateStore::markRead(const std::string& feedUrl, const uint32_t key)
   if (!state) return;
   if (std::find(state->readKeys.begin(), state->readKeys.end(), key) != state->readKeys.end()) return;
   state->readKeys.push_back(key);
-  if (state->readKeys.size() > MAX_READ_KEYS_PER_FEED) {
+  if (state->readKeys.size() > maxReadKeysForFeed(feedUrl)) {
     state->readKeys.erase(state->readKeys.begin());  // evict oldest
   }
   dirty = true;
@@ -174,7 +190,7 @@ void RssItemStateStore::toggleStar(const std::string& feedUrl, const uint32_t ke
     state->starredKeys.erase(it);
   } else {
     state->starredKeys.push_back(key);
-    if (state->starredKeys.size() > MAX_READ_KEYS_PER_FEED) state->starredKeys.erase(state->starredKeys.begin());
+    if (state->starredKeys.size() > maxReadKeysForFeed(feedUrl)) state->starredKeys.erase(state->starredKeys.begin());
   }
   dirty = true;
 }

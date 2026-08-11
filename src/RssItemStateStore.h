@@ -10,9 +10,19 @@
  * feeds, persisted as a small binary cache at /.crosspoint/rss/state.bin.
  *
  * Bounded by design (380KB RAM, no PSRAM): at most MAX_FEEDS_TRACKED feeds,
- * each keeping at most MAX_READ_KEYS_PER_FEED read markers (oldest evicted
+ * each keeping at most maxReadKeysForFeed() read markers (oldest evicted
  * first) — worst case ~20 * 200 * 4 bytes = 16KB while a feed/item list
  * activity is open. Not loaded unless RSS Feeds is actually in use.
+ *
+ * FreshRSS keeps every article under one pseudo-feed key ("freshrss") rather
+ * than one entry per subscription, so its read-marker cap tracks the
+ * user-configured article limit (up to 1000, via setFreshRssArticleLimit())
+ * instead of the fixed MAX_READ_KEYS_PER_FEED used for ordinary feeds —
+ * otherwise reading past the 200th cached article would evict the oldest
+ * read markers and those articles would resurface as unread. The limit is
+ * injected by the caller (rather than read from CrossPointSettings here) so
+ * this module stays free of the ArduinoJson/CrossPointSettings dependency
+ * and is still linkable into the host test binaries.
  */
 class RssItemStateStore {
  public:
@@ -48,6 +58,18 @@ class RssItemStateStore {
   // Unread items among the given keys still present in the feed's read set.
   size_t countUnread(const std::string& feedUrl, const std::vector<uint32_t>& keys) const;
 
+  // Matches FreshRssCache::MAX_ARTICLES — the read-marker cap for the
+  // FreshRSS pseudo-feed never needs to exceed the largest snapshot the
+  // cache itself will ever hold. Public so the persisted-count sanity check
+  // in the .cpp's load() path can size itself off the same constant.
+  static constexpr size_t MAX_FRESHRSS_READ_KEYS = 1000;
+
+  // Sets the read-marker cap for the FreshRSS pseudo-feed ("freshrss") to
+  // match SETTINGS.freshRssArticleLimit. Call after loading settings and
+  // whenever the user changes the limit; defaults to MAX_READ_KEYS_PER_FEED
+  // (safe for tests and before settings are loaded).
+  void setFreshRssArticleLimit(size_t limit);
+
  private:
   RssItemStateStore() = default;
 
@@ -66,6 +88,13 @@ class RssItemStateStore {
   std::unordered_map<std::string, FeedState> feedStates;
   bool loaded = false;
   bool dirty = false;
+  size_t freshRssArticleLimit = MAX_READ_KEYS_PER_FEED;
+
+  // Read-marker cap for one feed's FIFO eviction. FreshRSS packs every
+  // article under a single feed key ("freshrss"), so it gets a cap tied to
+  // freshRssArticleLimit instead of the fixed per-feed cap ordinary (many
+  // small) feeds use.
+  size_t maxReadKeysForFeed(const std::string& feedUrl) const;
 
   // Returns nullptr if feedUrl isn't tracked and the tracked-feed cap has
   // already been reached — callers degrade gracefully (no persisted

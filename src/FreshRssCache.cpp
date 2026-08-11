@@ -8,6 +8,7 @@
 #include <array>
 #include <ctime>
 #include <limits>
+#include <unordered_set>
 
 namespace {
 constexpr uint32_t MAGIC = 0x46525335;  // FRS5
@@ -322,33 +323,52 @@ bool readIndexEntry(HalFile& file, FreshRssIndexEntry& entry, const uint8_t vers
 
 bool readIndexTable(HalFile& file, const SnapshotHeader& header, std::vector<std::string>* categories,
                     std::vector<FreshRssIndexEntry>& entries) {
-  if (header.version < 3 || header.indexOffset >= file.fileSize() || !file.seekSet(header.indexOffset)) return false;
+  if (header.version < 3 || header.indexOffset >= file.fileSize() || !file.seekSet(header.indexOffset)) {
+    LOG_ERR("FRSS", "readIndexTable: bad header (version=%u indexOffset=%u fileSize=%llu)", header.version,
+            header.indexOffset, static_cast<unsigned long long>(file.fileSize()));
+    return false;
+  }
   uint32_t categoryCount = 0;
-  if (!readPod(file, categoryCount) || categoryCount > MAX_INDEX_CATEGORIES) return false;
+  if (!readPod(file, categoryCount) || categoryCount > MAX_INDEX_CATEGORIES) {
+    LOG_ERR("FRSS", "readIndexTable: bad category count %u", categoryCount);
+    return false;
+  }
   std::vector<std::string> loadedCategories;
   loadedCategories.reserve(categoryCount);
   for (uint32_t i = 0; i < categoryCount; ++i) {
     std::string category;
-    if (!readString(file, category, MAX_ID)) return false;
+    if (!readString(file, category, MAX_ID)) {
+      LOG_ERR("FRSS", "readIndexTable: failed reading category %u/%u", i, categoryCount);
+      return false;
+    }
     loadedCategories.push_back(std::move(category));
   }
   entries.clear();
   entries.reserve(header.indexCount);
-  std::vector<uint32_t> keys;
-  keys.reserve(header.indexCount);
+  // A linear std::find here made duplicate-key detection O(n^2) over the
+  // index (~500k comparisons for a 1000-article snapshot) on every single
+  // cache read (loadKeys, loadItemsByKeys, loadItemBody, loadNavigation,
+  // stats, ...). A hash set makes each check O(1) amortized.
+  std::unordered_set<uint32_t> seenKeys;
+  seenKeys.reserve(header.indexCount);
   for (uint32_t i = 0; i < header.indexCount; ++i) {
     FreshRssIndexEntry entry;
     const size_t minimumRecordOffset = header.version >= 4 ? HEADER_SIZE : HEADER_TIMESTAMP + sizeof(uint32_t);
     if (!readIndexEntry(file, entry, header.version) || entry.recordOffset < minimumRecordOffset ||
         entry.recordOffset >= header.indexOffset || entry.recordSize == 0 ||
         entry.recordSize > header.indexOffset - entry.recordOffset - sizeof(uint32_t) ||
-        std::find(keys.begin(), keys.end(), entry.key) != keys.end() ||
-        (entry.subscriptionIndex >= 128 && entry.subscriptionIndex != 0xffff))
+        seenKeys.count(entry.key) != 0 ||
+        (entry.subscriptionIndex >= 128 && entry.subscriptionIndex != 0xffff)) {
+      LOG_ERR("FRSS", "readIndexTable: rejected malformed/duplicate index entry %u/%u", i, header.indexCount);
       return false;
-    keys.push_back(entry.key);
+    }
+    seenKeys.insert(entry.key);
     entries.push_back(entry);
   }
-  if (!readCommit(file)) return false;
+  if (!readCommit(file)) {
+    LOG_ERR("FRSS", "readIndexTable: missing/invalid commit marker after index table");
+    return false;
+  }
   if (categories) *categories = std::move(loadedCategories);
   return true;
 }
@@ -481,6 +501,7 @@ bool WriteSession::begin(const FreshRssMetadata& value, const size_t articleLimi
   Storage.remove(TEMP);
   holder = new (std::nothrow) HalFileHolder();
   if (!holder || !Storage.openFileForWrite("FRSS", TEMP, holder->file)) {
+    LOG_ERR("FRSS", "WriteSession::begin failed to open %s for write (holder=%d)", TEMP, holder != nullptr);
     delete holder;
     holder = nullptr;
     failedState = true;
@@ -520,6 +541,7 @@ bool WriteSession::begin(const FreshRssMetadata& value, const size_t articleLimi
       !writePod(holder->file, zero) || !writePod(holder->file, zero) || !writePod(holder->file, zero) ||
       !writePod(holder->file, zeroMsec) || !writePod(holder->file, zero) || !writePod(holder->file, zero) ||
       !writeMetadata(holder->file, metadata)) {
+    LOG_ERR("FRSS", "WriteSession::begin failed to write snapshot header/metadata to %s", TEMP);
     abort();
     return false;
   }
@@ -675,37 +697,44 @@ bool WriteSession::commit() {
     return false;
   }
   if (holder->file.position() > std::numeric_limits<uint32_t>::max()) {
+    LOG_ERR("FRSS", "WriteSession::commit: %s exceeds the 32-bit offset range", TEMP);
     abort();
     return false;
   }
   const uint32_t indexOffset = static_cast<uint32_t>(holder->file.position());
   if (!writeIndexTable(holder->file, indexCategories, indexEntries, VERSION) || !writePod(holder->file, COMMIT)) {
+    LOG_ERR("FRSS", "WriteSession::commit: failed writing index table/commit marker to %s", TEMP);
     abort();
     return false;
   }
   holder->file.flush();
   if (!holder->file.seek(sizeof(uint32_t) + sizeof(uint8_t)) || !writePod(holder->file, articleCount)) {
+    LOG_ERR("FRSS", "WriteSession::commit: failed to backpatch article count");
     abort();
     return false;
   }
   if (!holder->file.seek(HEADER_INDEX_OFFSET) || !writePod(holder->file, indexOffset) ||
       !writePod(holder->file, static_cast<uint32_t>(indexEntries.size()))) {
+    LOG_ERR("FRSS", "WriteSession::commit: failed to backpatch index offset/count");
     abort();
     return false;
   }
   // The timestamp is a v3 header extension stored immediately after the
   // index count. It is advisory because boards without a valid RTC report 0.
   if (!holder->file.seek(HEADER_TIMESTAMP) || !writePod(holder->file, lastRefreshUnix)) {
+    LOG_ERR("FRSS", "WriteSession::commit: failed to backpatch last-refresh timestamp");
     abort();
     return false;
   }
   if (!holder->file.seek(HEADER_CURSOR_MSEC) || !writePod(holder->file, syncCursor.modifiedMsec) ||
       !writePod(holder->file, syncCursor.generation) || !writePod(holder->file, syncCursor.accountIdentity)) {
+    LOG_ERR("FRSS", "WriteSession::commit: failed to backpatch sync cursor");
     abort();
     return false;
   }
   holder->file.flush();
   if (!holder->file.close()) {
+    LOG_ERR("FRSS", "WriteSession::commit: failed to close %s", TEMP);
     abort();
     return false;
   }
@@ -714,12 +743,16 @@ bool WriteSession::commit() {
   open = false;
   Storage.remove(BACKUP);
   if (Storage.exists(SNAPSHOT) && !Storage.rename(SNAPSHOT, BACKUP)) {
+    LOG_ERR("FRSS", "WriteSession::commit: failed to back up %s before replacing it", SNAPSHOT);
     Storage.remove(TEMP);
     failedState = true;
     return false;
   }
   if (!Storage.rename(TEMP, SNAPSHOT)) {
-    if (Storage.exists(BACKUP)) Storage.rename(BACKUP, SNAPSHOT);
+    LOG_ERR("FRSS", "WriteSession::commit: failed to install %s as %s%s", TEMP, SNAPSHOT,
+            Storage.exists(BACKUP) ? "; restoring previous snapshot from backup" : "; no backup to restore from");
+    if (Storage.exists(BACKUP) && !Storage.rename(BACKUP, SNAPSHOT))
+      LOG_ERR("FRSS", "WriteSession::commit: backup restore also failed — snapshot is now missing");
     Storage.remove(TEMP);
     failedState = true;
     return false;
@@ -741,29 +774,52 @@ void WriteSession::abort() {
 
 bool ensureCurrentSnapshot() {
   HalFile input;
+  // Opening the file failing here is the ordinary "no snapshot cached yet"
+  // state on first RSS use — not logged as an error.
   if (!Storage.openFileForRead("FRSS", SNAPSHOT, input)) return false;
   uint32_t articleCount = 0, subs = 0, tags = 0, limit = 0;
   uint8_t version = 0;
-  if (!readHeader(input, articleCount, subs, tags, limit, version)) return false;
+  if (!readHeader(input, articleCount, subs, tags, limit, version)) {
+    input.close();
+    return false;
+  }
   if (version >= 2) return true;
 
+  // v1 -> current migration: everything past here is an actual failure worth
+  // logging, since it means a previously-working snapshot is being discarded.
   FreshRssMetadata metadata;
-  if (!readMetadata(input, &metadata) || metadata.subscriptions.size() != subs || metadata.tags.size() != tags) return false;
+  if (!readMetadata(input, &metadata) || metadata.subscriptions.size() != subs || metadata.tags.size() != tags) {
+    LOG_ERR("FRSS", "ensureCurrentSnapshot: v1 metadata failed to read/validate during migration");
+    input.close();
+    return false;
+  }
   WriteSession writer;
-  if (!writer.begin(metadata, limit)) return false;
+  if (!writer.begin(metadata, limit)) {
+    LOG_ERR("FRSS", "ensureCurrentSnapshot: failed to open a write session for v1 migration");
+    input.close();
+    return false;
+  }
   for (uint32_t i = 0; i < articleCount; ++i) {
     FreshRssCachedArticle article;
     if (!readArticle(input, article, true, false) || !writer.append(article)) {
+      LOG_ERR("FRSS", "ensureCurrentSnapshot: v1 migration failed at article %u/%u", i, articleCount);
       writer.abort();
+      input.close();
       return false;
     }
   }
   if (!readCommit(input)) {
+    LOG_ERR("FRSS", "ensureCurrentSnapshot: v1 snapshot missing/invalid commit marker");
     writer.abort();
+    input.close();
     return false;
   }
   input.close();
-  return writer.commit();
+  if (!writer.commit()) {
+    LOG_ERR("FRSS", "ensureCurrentSnapshot: failed to commit migrated snapshot");
+    return false;
+  }
+  return true;
 }
 
 bool exists() {
@@ -954,7 +1010,7 @@ bool loadItemsByKeys(const std::vector<uint32_t>& keys, const size_t offset, con
   return true;
 }
 
-bool loadItemBodyByOffset(const uint32_t recordOffset, RichText& outBody, bool& complete) {
+bool loadItemBodyByOffset(const uint32_t recordOffset, const uint32_t key, RichText& outBody, bool& complete) {
   outBody.clear();
   complete = false;
   if (!ensureCurrentSnapshot()) return false;
@@ -967,12 +1023,16 @@ bool loadItemBodyByOffset(const uint32_t recordOffset, RichText& outBody, bool& 
   std::vector<std::string> categories;
   std::vector<FreshRssIndexEntry> entries;
   if (!readIndexTable(file, header, &categories, entries)) return false;
-  const auto entry = std::find_if(entries.begin(), entries.end(), [recordOffset](const FreshRssIndexEntry& value) {
-    return value.recordOffset == recordOffset;
-  });
+  // Match on both offset and key: a re-commit (delta sync, eviction) can
+  // reuse the same byte offset for a different article, so the offset alone
+  // does not identify the record the caller expects.
+  const auto entry =
+      std::find_if(entries.begin(), entries.end(), [recordOffset, key](const FreshRssIndexEntry& value) {
+        return value.recordOffset == recordOffset && value.key == key;
+      });
   if (entry == entries.end() || !file.seekSet(recordOffset)) return false;
   FreshRssCachedArticle article;
-  if (!readArticle(file, article, true, true)) return false;
+  if (!readArticle(file, article, true, true) || article.key != key) return false;
   outBody = std::move(article.body);
   complete = !article.bodyTruncated;
   return true;

@@ -93,12 +93,18 @@ class FreshRssApiClient {
  public:
   using ArticleSink = FreshRssJsonParser::ArticleSink;
   using ProgressCallback = std::function<void(size_t received, size_t limit)>;
+  // Polled between HTTP reads during a request. Sync runs on the caller's own
+  // task (see FreshRssSyncRunner), so this is how a long-running fetch can be
+  // interrupted from the same blocking call stack that started it — e.g. a
+  // lambda that re-polls raw Back-button state.
+  using CancelCallback = std::function<bool()>;
   explicit FreshRssApiClient(FreshRssAccount account) : account(std::move(account)) {}
 
-  bool fetchMetadata(FreshRssMetadata& metadata, std::string& auth, std::string& error);
+  bool fetchMetadata(FreshRssMetadata& metadata, std::string& auth, std::string& error,
+                     const CancelCallback& shouldCancel = nullptr);
   bool fetchArticles(const std::string& auth, size_t articleLimit, const ArticleSink& sink, std::string& error,
                      const ProgressCallback& progress = {}, const FreshRssSyncCursor* cursor = nullptr,
-                     bool* deltaUnsupported = nullptr);
+                     bool* deltaUnsupported = nullptr, const CancelCallback& shouldCancel = nullptr);
   bool fetchArticles(const std::string& auth, size_t articleLimit, const ArticleSink& sink, std::string& error,
                      FreshRssSyncMode mode, const FreshRssSyncCursor* cursor, bool& deltaUnsupported,
                      const ProgressCallback& progress = {}) {
@@ -108,9 +114,14 @@ class FreshRssApiClient {
   bool refresh(size_t articleLimit, FreshRssMetadata& metadata, const ArticleSink& sink, std::string& error);
 
  private:
-  bool login(std::string& auth, std::string& error);
+  bool login(std::string& auth, std::string& error, const CancelCallback& shouldCancel);
+  // `requestCompleted`, when provided, reports whether the HTTP request
+  // itself completed (regardless of whether the response then parsed) — the
+  // caller needs this to tell a transport failure (DNS/timeout/TLS/reset)
+  // apart from a response that came back but failed to parse or validate.
   bool getJson(const std::string& path, FreshRssJsonParser::Document document, FreshRssJsonParser& parser,
-              const std::string& auth, std::string& error);
+              const std::string& auth, std::string& error, bool* requestCompleted = nullptr,
+              const CancelCallback& shouldCancel = nullptr);
   std::string endpoint(const std::string& path) const;
 
   FreshRssAccount account;

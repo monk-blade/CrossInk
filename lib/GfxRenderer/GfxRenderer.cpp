@@ -5,6 +5,7 @@
 #include <FontDecompressor.h>
 #include <GujaratiGlyphs.h>
 #include <GujaratiOverlayDraw.h>
+#include <GujaratiShapingData.h>
 #include <HalGPIO.h>
 #include <Logging.h>
 #include <SdCardFont.h>
@@ -12,6 +13,7 @@
 #include <freertos/task.h>
 
 #include <algorithm>
+#include <cstring>
 
 #include "FontCacheManager.h"
 
@@ -356,7 +358,11 @@ int GfxRenderer::resolveTextFontId(const int fontId, const char* text, const Epd
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&cursor)))) {
     // Redirect missing Gujarati as well as CJK to the size-matched SD family.
     // The whole string remains on one font so measurement and drawing agree.
-    const bool isGujarati = (cp >= 0x0A80 && cp <= 0x0AFF) || (cp >= 0xE000 && cp <= 0xE07C);
+    // Uses the shaper's own PUA_END rather than a hand-copied 0xE07C so a
+    // regenerated font with more private-use glyphs doesn't silently lose
+    // fallback routing for the new codepoints.
+    const bool isGujarati = (cp >= 0x0A80 && cp <= 0x0AFF) ||
+                            (cp >= GujaratiShapingData::PUA_START && cp <= GujaratiShapingData::PUA_END);
     if ((utf8IsCjkCodepoint(cp) || isGujarati) && !primary.hasCodepoint(cp, style) && fallback.hasCodepoint(cp, style)) {
       return fallbackFontId;
     }
@@ -1071,7 +1077,31 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
   }
 
   int w = 0, h = 0;
-  fontIt->second.getTextDimensions(textCursor, &w, &h, style);
+  // Gujarati overlay marks (reph, subjoined Ra, anusvara/chandrabindu) are
+  // zero-advance in drawText() — they're positioned on the preceding glyph,
+  // not the pen. getTextDimensions() has no such concept, so measuring the
+  // raw string here would count their advance and disagree with the draw.
+  // The SD-font path above already skips them per codepoint; mirror that by
+  // filtering them out before measuring, same as the SD path does.
+  std::string filtered;
+  const char* measureCursor = textCursor;
+  const char* scan = textCursor;
+  bool hasOverlayMark = false;
+  while (uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&scan))) {
+    if (utf8IsGujaratiOverlayMark(cp)) {
+      hasOverlayMark = true;
+      break;
+    }
+  }
+  if (hasOverlayMark) {
+    filtered.reserve(std::strlen(textCursor));
+    const char* rebuild = textCursor;
+    while (uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&rebuild))) {
+      if (!utf8IsGujaratiOverlayMark(cp)) utf8AppendCodepoint(cp, filtered);
+    }
+    measureCursor = filtered.c_str();
+  }
+  fontIt->second.getTextDimensions(measureCursor, &w, &h, style);
   return w;
 }
 

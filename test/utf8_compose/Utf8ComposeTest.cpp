@@ -91,3 +91,36 @@ TEST(Utf8LookupWord, TrimsUnicodePunctuationWithoutDamagingWords) {
 TEST(Utf8LookupWord, ComposesRetainedCombiningMarks) {
   EXPECT_EQ(utf8CleanLookupWord("(cafe" + kCombAcute + ")"), "caf\xC3\xA9");
 }
+
+// utf8SanitizeInPlace has a fast path that skips the allocate-and-rebuild
+// pass entirely for already-clean UTF-8 — these tests cover both branches.
+TEST(Utf8Sanitize, PassesThroughCleanAsciiAndUtf8) {
+  std::string ascii = "hello world";
+  utf8SanitizeInPlace(ascii);
+  EXPECT_EQ(ascii, "hello world");
+
+  std::string clean = "caf\xC3\xA9 \xE0\xAA\x97\xE0\xAB\x81\xE0\xAA\x9C\xE0\xAA\xB0\xE0\xAA\xBE\xE0\xAA\xA4\xE0\xAA\xBF";
+  const std::string expected = clean;
+  utf8SanitizeInPlace(clean);
+  EXPECT_EQ(clean, expected);
+}
+
+TEST(Utf8Sanitize, RemovesStrayContinuationBytes) {
+  std::string malformed = "ab\x80體cd";  // 0x80 is a bare continuation byte
+  utf8SanitizeInPlace(malformed);
+  EXPECT_EQ(malformed.find('\x80'), std::string::npos);
+  EXPECT_NE(malformed.find("ab"), std::string::npos);
+  EXPECT_NE(malformed.find("cd"), std::string::npos);
+}
+
+TEST(Utf8Sanitize, StripsLiteralReplacementGlyph) {
+  std::string withReplacement = "a\xEF\xBF\xBD" "b";  // literal U+FFFD between 'a' and 'b'
+  utf8SanitizeInPlace(withReplacement);
+  EXPECT_EQ(withReplacement, "ab");
+}
+
+TEST(Utf8Sanitize, EmptyStringStaysEmpty) {
+  std::string empty;
+  utf8SanitizeInPlace(empty);
+  EXPECT_TRUE(empty.empty());
+}

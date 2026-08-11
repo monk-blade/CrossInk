@@ -669,18 +669,27 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
 }
 
 bool HttpDownloader::fetchUrlWithHeaders(const std::string& url, const DataCallback& onData,
-                                         const std::vector<Header>& headers) {
+                                         const std::vector<Header>& headers, CancelCallback shouldCancel) {
   if (!onData) return false;
+  // Unlike streamUrl/downloadToFile, this path had no WifiPowerSaveGuard —
+  // every FreshRSS request ran with Wi-Fi power save on, which is slower and
+  // more timeout-prone than every other network feature in the firmware.
+  WifiPowerSaveGuard wifiPowerSaveGuard;
+  (void)wifiPowerSaveGuard;
   Sink sink;
   sink.write = onData;
+  sink.shouldCancel = std::move(shouldCancel);
   return runFreshRssRequest(url, "GET", "", headers, sink) == OK;
 }
 
 bool HttpDownloader::postForm(const std::string& url, const std::string& formBody, const DataCallback& onData,
-                              const std::vector<Header>& headers) {
+                              const std::vector<Header>& headers, CancelCallback shouldCancel) {
   if (!onData) return false;
+  WifiPowerSaveGuard wifiPowerSaveGuard;
+  (void)wifiPowerSaveGuard;
   Sink sink;
   sink.write = onData;
+  sink.shouldCancel = std::move(shouldCancel);
   std::vector<Header> requestHeaders = headers;
   requestHeaders.emplace_back("Content-Type", "application/x-www-form-urlencoded");
   return runFreshRssRequest(url, "POST", formBody, requestHeaders, sink) == OK;
