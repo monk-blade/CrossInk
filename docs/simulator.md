@@ -157,3 +157,8 @@ pairs one Latin face with one Gujarati face (build separate files for other
 pairings); vertical metrics come from the Latin (primary) face; the Gujarati
 font needs conjunct coverage (the bake step handles Rasa/Hind Vadodara/Mukta
 Vaani style component fonts).
+
+The builder emits sizes `8,10,12,14,16,18` by default. Keep the small sizes
+(8/10 pt): the reader status bar and reader menu use the selected SD family as
+the UI fallback at 8-12 pt, so if only reading sizes exist the closest (12 pt)
+glyphs are too tall for the status bar and the chapter/title text is clipped.
