@@ -10,8 +10,6 @@
 #include <cstring>
 #include <optional>
 
-#include "components/UIScale.h"
-
 #include "ClippingStore.h"
 #include "CrossInkHalFrontlight.h"
 #include "CrossPointSettings.h"
@@ -20,6 +18,7 @@
 #include "ReaderUtils.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/TouchRegistry.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
 #include "components/UiAppHelpers.h"
