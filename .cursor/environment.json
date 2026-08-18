@@ -1,0 +1,5 @@
+{
+  "name": "CrossInk firmware + simulator",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh"
+}
