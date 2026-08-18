@@ -123,3 +123,37 @@ python3 lib/EpdFont/scripts/fontconvert_sdcard.py \
 
 (This mirrors the maintainer's out-of-tree `build-gujarati-fonts.py`; the
 canonical release fonts are still built by that tool.)
+
+### Combined Latin + Gujarati font (single file, no firmware changes)
+
+Instead of running a Latin body font with a separate Gujarati fallback, you can
+bake **one** `.cpfont` whose Latin glyphs come from a Latin font (e.g. Lexend
+Deca) and whose Gujarati glyphs come from a Gujarati font. Because a single font
+carries both scripts, Latin words render in the Latin face and Gujarati words in
+the Gujarati face — selectable from the normal font picker, with no firmware
+changes. `build_combined_font.py` runs the bake + merge in one step:
+
+```sh
+pip install fonttools uharfbuzz freetype-py
+LEX=lib/EpdFont/builtinFonts/source/LexendDeca
+
+# LexendDeca + Rasa (Rasa is a variable font -> pick weights)
+python3 lib/GujaratiShaper/scripts/build_combined_font.py \
+  --latin-regular $LEX/LexendDeca-Regular.ttf --latin-bold $LEX/LexendDeca-Bold.ttf \
+  --gujarati-regular "Rasa[wght].ttf" --gujarati-regular-weight 400 \
+  --gujarati-bold    "Rasa[wght].ttf" --gujarati-bold-weight 700 \
+  --name LexendDecaRasa --output-dir ./fs_/.fonts/LexendDecaRasa/
+
+# LexendDeca + Hind Vadodara (static weights)
+python3 lib/GujaratiShaper/scripts/build_combined_font.py \
+  --latin-regular $LEX/LexendDeca-Regular.ttf --latin-bold $LEX/LexendDeca-Bold.ttf \
+  --gujarati-regular HindVadodara-Regular.ttf \
+  --gujarati-bold    HindVadodara-Bold.ttf \
+  --name LexendDecaHindVadodara --output-dir ./fs_/.fonts/LexendDecaHindVadodara/
+```
+
+Then select the family (`sdFontFamilyName`) as usual. Notes: one combined file
+pairs one Latin face with one Gujarati face (build separate files for other
+pairings); vertical metrics come from the Latin (primary) face; the Gujarati
+font needs conjunct coverage (the bake step handles Rasa/Hind Vadodara/Mukta
+Vaani style component fonts).

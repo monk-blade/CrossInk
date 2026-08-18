@@ -106,9 +106,13 @@ def bake(font_path: str, weight, pua_json: str, out_ttf: str, out_map: str) -> N
             g = shape([RA, VIRAMA, KA])
             target = [x for x in g if "reph" in x[0].lower()] or g[-1:]
         elif kind == "rakar":
+            # The subjoined-ra component is named differently per font (Rasa:
+            # gjRakar / gjR.post, Hind Vadodara: gjRAc2, …). Prefer an obvious
+            # rakar name, else take the non-placeholder glyph (fonts insert a
+            # dotted-circle base when RA+VIRAMA is shaped without a consonant).
             g = shape([VIRAMA, RA])
             target = [x for x in g if "rakar" in x[0].lower() or "r.post" in x[0].lower()]
-            target = target or [x for x in g if x[0] != "dottedCircle"]
+            target = target or [x for x in g if "dottedcircle" not in x[0].lower() and x[0] != ".notdef"]
         elif kind == "half":
             g = shape(cps + [KA])
             target = [x for x in g if x[1] < len(cps)]
