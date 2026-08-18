@@ -1,11 +1,16 @@
 #include "EpubReaderMenuActivity.h"
 
+#include <FontCacheManager.h>
 #include <FreeInkUIIcon.h>
 #include <GfxRenderer.h>
+#include <GujaratiIntegration.h>
 #include <I18n.h>
 
 #include <algorithm>
 #include <cstring>
+#include <optional>
+
+#include "components/UIScale.h"
 
 #include "ClippingStore.h"
 #include "CrossInkHalFrontlight.h"
@@ -643,16 +648,31 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   // Header via GUI.drawHeader (already FreeInkUI-themed) for the battery
   // indicator; the rest of the screen renders through the app.
   const Rect headerRect = readerMenuHeaderRect(renderer, mappedInput);
+  // Shape the (possibly Gujarati) book/chapter title and prewarm its SD-fallback
+  // glyphs before drawing the header. The header uses the UI_12 title font; the
+  // header path does not shape, and without a prewarm pass the on-demand glyph
+  // cache overflows on a long shaped title and the whole title renders as tofu.
+  // Mirrors EpubReaderActivity::renderStatusBar(). The scope must stay alive
+  // until after the title is drawn so the batched glyphs are not discarded.
+  std::string headerTitle = title;
+  std::optional<FontCacheManager::PrewarmScope> titlePrewarm;
+  if (auto* fcm = renderer.getFontCacheManager();
+      fcm != nullptr && GujaratiIntegration::containsGujarati(headerTitle)) {
+    GujaratiIntegration::shapeUiString(headerTitle);
+    titlePrewarm.emplace(fcm->createPrewarmScope());
+    renderer.drawText(uiScaleSpec().titleFontId, 0, 0, headerTitle.c_str(), true, EpdFontFamily::REGULAR);
+    titlePrewarm->endScanAndPrewarm();
+  }
   if (mappedInput.hasTouchHardware()) {
     const Rect homeRect = readerMenuHeaderActionRect(headerRect, metrics);
     const Rect homeTouchRect = readerMenuHeaderActionTouchRect(headerRect, homeRect);
     const int titleRightReserve = headerRect.x + headerRect.width - homeRect.x + headerActionGap;
-    TouchHeaderBackButton::draw(renderer, uiTarget, headerRect, title.c_str(), true, titleRightReserve);
+    TouchHeaderBackButton::draw(renderer, uiTarget, headerRect, headerTitle.c_str(), true, titleRightReserve);
     TouchRegistry::getInstance().add(homeTouchRect, static_cast<int>(TOUCH_HOME_ICON_INDEX), TouchRegistry::Tab);
     drawSdkIcon(uiTarget, icon_home_24, homeRect.x + (homeRect.width - tabIconSize) / 2,
                 homeRect.y + (homeRect.height - tabIconSize) / 2);
   } else {
-    GUI.drawHeader(renderer, headerRect, title.c_str(), nullptr, true);
+    GUI.drawHeader(renderer, headerRect, headerTitle.c_str(), nullptr, true);
   }
 
   // Progress summary
