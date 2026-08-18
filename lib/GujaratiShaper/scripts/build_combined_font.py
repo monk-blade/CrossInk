@@ -55,7 +55,11 @@ def main() -> int:
     ap.add_argument("--gujarati-regular-weight", type=float, default=None, help="Weight axis for a variable Gujarati regular.")
     ap.add_argument("--gujarati-bold-weight", type=float, default=None, help="Weight axis for a variable Gujarati bold.")
     ap.add_argument("--name", required=True, help="Combined family name (used for filenames and the font picker).")
-    ap.add_argument("--sizes", default="12,14,16,18")
+    # Include the small UI sizes (8, 10) as well as reading sizes: the reader
+    # status bar / menu route Gujarati through this family as the UI fallback at
+    # 8-12pt, so omitting the small sizes makes the closest (12pt) glyphs too
+    # tall for the status bar and clips chapter/title text.
+    ap.add_argument("--sizes", default="8,10,12,14,16,18")
     ap.add_argument("--output-dir", required=True)
     ap.add_argument("--pua-mapping", default=DEFAULT_PUA)
     args = ap.parse_args()

@@ -10,6 +10,7 @@
 - Book titles and authors in scripts that need an SD-card font (such as Gujarati) no longer render as diamond placeholders on the Home screen when the same screen also draws text in a built-in font.
 - Book titles and authors on the Recent Books screen now render correctly in scripts that need an SD-card font, instead of showing diamond placeholders for characters the previously drawn screen did not already use.
 - The RSS feed list, RSS article list, EPUB status bar, and chapter selection screens no longer show placeholder glyphs for Gujarati text on their first paint.
+- The in-book reader menu header no longer shows placeholder glyphs for Gujarati book or chapter titles; the title is now shaped and its SD-font glyphs are prewarmed before the header is drawn.
 - Very long titles or labels containing Gujarati text no longer lose characters past roughly the first line's worth of text.
 - Opening a cached FreshRSS article can no longer show the wrong article after a delta sync or cache cleanup reused the same on-disk position for a different article.
 - A FreshRSS delta sync that fails because of a dropped network connection no longer triggers an unnecessary full re-download of the article cache.
