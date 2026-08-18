@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 
@@ -70,6 +71,7 @@ def bake(font_path: str, weight, pua_json: str, out_ttf: str, out_map: str) -> N
     import uharfbuzz as hb
     from fontTools.ttLib import TTFont
     from fontTools.ttLib.tables._g_l_y_f import Glyph, GlyphComponent
+    from fontTools.pens.boundsPen import BoundsPen
 
     tt = TTFont(font_path)
     if "fvar" in tt:
@@ -97,6 +99,7 @@ def bake(font_path: str, weight, pua_json: str, out_ttf: str, out_map: str) -> N
 
     pua = json.load(open(pua_json))
     mapping, baked, direct, skipped = {}, 0, 0, 0
+    baked_names = []
     for code, name in pua.items():
         kind, cps = decode_sequence(name)
         if kind is None:
@@ -114,8 +117,23 @@ def bake(font_path: str, weight, pua_json: str, out_ttf: str, out_map: str) -> N
             target = [x for x in g if "rakar" in x[0].lower() or "r.post" in x[0].lower()]
             target = target or [x for x in g if "dottedcircle" not in x[0].lower() and x[0] != ".notdef"]
         elif kind == "half":
-            g = shape(cps + [KA])
-            target = [x for x in g if x[1] < len(cps)]
+            # Extract the general half-form by shaping the sequence before a
+            # dummy base and taking the first cluster's glyph(s). The dummy must
+            # NOT form a conjunct ligature with the half-form, or the ligature
+            # (e.g. SA+VIRAMA+KA -> "sska") gets baked as the half-form. Try
+            # consonants that are almost never a conjunct's second member (LLA,
+            # NGA, NYA, NNA, TTHA) and accept the first that renders the dummy as
+            # its own separate glyph (cluster == len(cps)).
+            target = None
+            for dummy in (0x0AB3, 0x0A99, 0x0A9E, 0x0AA3, 0x0AA0, KA):
+                g = shape(cps + [dummy])
+                base = [x for x in g if x[1] < len(cps)]
+                separate_dummy = any(x[1] == len(cps) for x in g)
+                if base and separate_dummy:
+                    target = base
+                    break
+            if target is None:  # every dummy ligated; fall back to KA-based extraction
+                target = [x for x in shape(cps + [KA]) if x[1] < len(cps)]
         else:  # full conjunct
             target = shape(cps)
         target = [x for x in target if x[0] != ".notdef"]
@@ -123,8 +141,14 @@ def bake(font_path: str, weight, pua_json: str, out_ttf: str, out_map: str) -> N
             skipped += 1
             continue
         overlay = kind in ("reph", "rakar")  # zero-advance marks
-        if len(target) == 1 and target[0][2] == 0 and target[0][3] == 0 and not overlay:
-            mapping[code] = target[0][0]  # single glyph already correct; map by name
+        # Prefer mapping a single glyph directly so the font's native metrics
+        # (advance AND left side bearing) are preserved. This is essential for
+        # overlay marks: the firmware positions reph/rakar using the glyph's own
+        # bearing, so re-baking them into a composite with a synthetic lsb shifts
+        # them (e.g. reph drifting to the right). Overlays are always taken
+        # natively; base glyphs only when the shaping added no offset.
+        if len(target) == 1 and (overlay or (target[0][2] == 0 and target[0][3] == 0)):
+            mapping[code] = target[0][0]
             direct += 1
             continue
         comp = Glyph()
@@ -143,9 +167,20 @@ def bake(font_path: str, weight, pua_json: str, out_ttf: str, out_map: str) -> N
         order.append(new_name)
         hmtx.metrics[new_name] = (0 if overlay else int(round(pen)), 0)
         mapping[code] = new_name
+        baked_names.append(new_name)
         baked += 1
     ft.setGlyphOrder(order)
     ft["maxp"].numGlyphs = len(order)
+    # Set each baked composite's left side bearing to its true xMin so the
+    # rasterizer places the ink where the outline actually is (a synthetic lsb
+    # of 0 shifts glyphs whose outline extends left of the origin).
+    glyph_set = ft.getGlyphSet()
+    for name in baked_names:
+        pen = BoundsPen(glyph_set)
+        glyph_set[name].draw(pen)
+        if pen.bounds:
+            advance = hmtx.metrics[name][0]
+            hmtx.metrics[name] = (advance, int(math.floor(pen.bounds[0])))
     ft.save(out_ttf)
     json.dump(mapping, open(out_map, "w"), indent=1)
     print(f"{out_ttf}: baked={baked} direct={direct} skipped={skipped} mapped={len(mapping)}/{len(pua)}")
