@@ -95,3 +95,31 @@ already a Gujarati family). For headless/automated runs, write
 `{"sdFontFamilyName": "NotoSerifGujarati", "fontSize": 16}` and clear
 `./fs_/.crosspoint/epub_*` so sections re-shape. If a Gujarati font is missing,
 conjuncts render as empty boxes (tofu).
+
+### Rasa and other component-based Gujarati fonts
+
+`pua_mapping.json` (and the shaper's PUA assignments) come from Noto Serif
+Gujarati, which stores each conjunct as one pre-composed ligature glyph — so the
+converter above resolves every PUA glyph by name. The default reader family
+**Rasa** (and Hind Vadodara, Mukta Vaani, …) instead build conjuncts from
+*component* glyphs (half-forms + `gjRakar`/`.post`) positioned by GPOS, so none of
+the Noto glyph names exist in them and the firmware (one glyph per PUA) can't use
+them directly. Bake their shaped clusters into single glyphs first:
+
+```sh
+pip install uharfbuzz
+for w in 400:Regular 700:Bold; do
+  python3 lib/GujaratiShaper/scripts/bake_sd_font.py \
+    --font "Rasa[wght].ttf" --weight "${w%%:*}" \
+    --pua-mapping lib/GujaratiShaper/scripts/pua_mapping.json \
+    --out "Rasa-${w##*:}.baked.ttf" --out-mapping rasa_pua.json
+done
+python3 lib/EpdFont/scripts/fontconvert_sdcard.py \
+  --regular Rasa-Regular.baked.ttf --bold Rasa-Bold.baked.ttf \
+  --intervals "gujarati,latin-ext,(0x0964-0x0965),(0x20B9-0x20B9)" \
+  --sizes 12,14,16,18 --name Rasa \
+  --pua-mapping rasa_pua.json --output-dir ./fs_/.fonts/Rasa/
+```
+
+(This mirrors the maintainer's out-of-tree `build-gujarati-fonts.py`; the
+canonical release fonts are still built by that tool.)
