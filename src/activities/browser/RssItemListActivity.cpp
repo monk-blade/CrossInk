@@ -30,7 +30,11 @@
 
 namespace {
 constexpr unsigned long SYNC_PROGRESS_PAINT_MS = 250;
-constexpr int RSS_DATE_FONT_ID = SMALL_FONT_ID;
+
+struct ArticleRowText {
+  std::string primary;
+  std::string secondary;
+};
 }  // namespace
 
 void RssItemListActivity::onEnter() {
@@ -463,7 +467,9 @@ void RssItemListActivity::render(RenderLock&&) {
   if (state == ListState::BROWSING) {
     articleCount = std::to_string(visibleCount());
     headerSubtitleText = articleCount;
-    if (!cacheState.empty()) headerSubtitleText += " · " + cacheState;
+    const bool cacheNeedsAttention =
+        cacheState == tr(STR_FRESHRSS_CACHE_STATE_STALE) || cacheState == tr(STR_FRESHRSS_CACHE_STATE_REFRESH_FAILED);
+    if (cacheNeedsAttention) headerSubtitleText += " · " + cacheState;
     headerSubtitle = headerSubtitleText.c_str();
   }
   GUI.drawHeader(renderer, Rect{screen.x, screen.y + metrics.topPadding, screen.width, metrics.headerHeight},
@@ -530,15 +536,39 @@ void RssItemListActivity::render(RenderLock&&) {
       return;
     }
     const int pageEndIndex = std::min(static_cast<int>(visibleCount()), pageStartIndex + std::max(1, pageItems));
+
+    // Article titles own the row. Comfortable mode spends its second line on
+    // title overflow; only a title that already fits on line one yields that
+    // low-priority space to a compact date. The conservative width remains
+    // inside every theme's selection padding and scroll gutter, and drawList()
+    // performs the final theme-specific clipping.
+    constexpr int titleSideBudget = 48;
+    const int titleWidth = std::max(40, screen.width - metrics.contentSidePadding * 2 - titleSideBudget);
+    std::vector<ArticleRowText> visibleRows;
+    visibleRows.reserve(static_cast<size_t>(std::max(0, pageEndIndex - pageStartIndex)));
     std::string visibleTitles;
+    visibleTitles.reserve(visibleRows.capacity() * 96);
     for (int i = pageStartIndex; i < pageEndIndex; ++i) {
       const auto* item = itemAtVisibleIndex(static_cast<size_t>(i));
-      if (!item) continue;
-      visibleTitles += item->title;
-      if (!item->subtitle.empty()) {
-        visibleTitles += '\n';
-        visibleTitles += item->subtitle;
+      ArticleRowText row;
+      if (!item) {
+        visibleRows.push_back(std::move(row));
+        continue;
       }
+
+      auto titleLines = renderer.wrappedText(UI_10_FONT_ID, item->title.c_str(), titleWidth, showSubtitle ? 2 : 1);
+      if (!titleLines.empty()) row.primary = std::move(titleLines[0]);
+      if (showSubtitle) {
+        if (titleLines.size() > 1) {
+          row.secondary = std::move(titleLines[1]);
+        } else if (item->unavailable) {
+          row.secondary = item->subtitle;
+        } else if (showDates) {
+          row.secondary = RssDateFormatter::formatListCompact(item->date);
+        }
+      }
+      visibleRows.push_back(std::move(row));
+      visibleTitles += item->title;
       visibleTitles += '\n';
     }
     // The prewarm scope must stay alive until after GUI.drawList() below draws
@@ -551,25 +581,8 @@ void RssItemListActivity::render(RenderLock&&) {
     if (!visibleTitles.empty()) {
       auto* fcm = renderer.getFontCacheManager();
       if (fcm) {
-        constexpr int hPaddingInSelection = 8;
-        constexpr int listIconSize = 24;
-        constexpr int maxListValueWidth = 240;
-        int rowTextWidth = screen.width - metrics.contentSidePadding * 2 - hPaddingInSelection * 2 - listIconSize -
-                           hPaddingInSelection;
-        if (showDates) rowTextWidth -= maxListValueWidth;
-        rowTextWidth = std::max(0, rowTextWidth);
-        std::string truncatedTitles;
-        for (int i = pageStartIndex; i < pageEndIndex; ++i) {
-          const auto* item = itemAtVisibleIndex(static_cast<size_t>(i));
-          if (!item) continue;
-          truncatedTitles += renderer.truncatedText(UI_10_FONT_ID, item->title.c_str(), rowTextWidth);
-          truncatedTitles += '\n';
-        }
         prewarmScope.emplace(fcm->createPrewarmScope());
         renderer.drawText(UI_10_FONT_ID, 0, 0, visibleTitles.c_str(), true, EpdFontFamily::REGULAR);
-        if (!truncatedTitles.empty()) {
-          renderer.drawText(UI_10_FONT_ID, 0, 0, truncatedTitles.c_str(), true, EpdFontFamily::REGULAR);
-        }
         renderer.drawText(UI_10_FONT_ID, 0, 0, "\xe2\x80\xa6", true, EpdFontFamily::REGULAR);
         if (showSubtitle) {
           renderer.drawText(SMALL_FONT_ID, 0, 0, visibleTitles.c_str(), true, EpdFontFamily::REGULAR);
@@ -580,48 +593,21 @@ void RssItemListActivity::render(RenderLock&&) {
 
     GUI.drawList(
         renderer, Rect{screen.x, contentTop, screen.width, contentHeight}, static_cast<int>(visibleCount()),
-        selectorIndex, [this](const int index) {
-          const auto* item = itemAtVisibleIndex(static_cast<size_t>(index));
-          return item ? item->title : std::string();
+        selectorIndex,
+        [&visibleRows, pageStartIndex](const int index) {
+          const int row = index - pageStartIndex;
+          return row >= 0 && row < static_cast<int>(visibleRows.size()) ? visibleRows[static_cast<size_t>(row)].primary
+                                                                        : std::string();
         },
-        showSubtitle
-            ? std::function<std::string(int)>([this](const int index) {
-                const auto* item = itemAtVisibleIndex(static_cast<size_t>(index));
-                if (!item) return std::string();
-                if (!item->subtitle.empty()) return item->subtitle;
-                const auto& raw = item->date;
-                return SETTINGS.rssDateDisplay == CrossPointSettings::RSS_COMPACT_DATE
-                           ? RssDateFormatter::formatListCompact(raw)
-                           : RssDateFormatter::format(raw);
-              })
-            : nullptr,
+        showSubtitle ? std::function<std::string(int)>([&visibleRows, pageStartIndex](const int index) {
+          const int row = index - pageStartIndex;
+          return row >= 0 && row < static_cast<int>(visibleRows.size())
+                     ? visibleRows[static_cast<size_t>(row)].secondary
+                     : std::string();
+        })
+                     : nullptr,
+        nullptr, nullptr, false,
         [this](const int index) {
-          const auto* item = itemAtVisibleIndex(static_cast<size_t>(index));
-          if (!item) return UIIcon::None;
-          return RSS_ITEM_STATE.isRead(feed.url, item->key) ? UIIcon::ReadDot : UIIcon::UnreadDot;
-        },
-        [this, showDates](const int index) {
-          const auto* item = itemAtVisibleIndex(static_cast<size_t>(index));
-          if (!item) return std::string();
-          const bool queued = RSS_ITEM_STATE.isQueued(feed.url, item->key);
-          std::string value;
-          if (queued) {
-            if (!value.empty()) value += ' ';
-            value += "Q";
-          }
-          if (showDates) {
-            const auto& raw = item->date;
-            const std::string date = SETTINGS.rssDateDisplay == CrossPointSettings::RSS_COMPACT_DATE
-                                         ? RssDateFormatter::formatListCompact(raw)
-                                         : RssDateFormatter::format(raw);
-            if (!date.empty()) {
-              if (!value.empty()) value += ' ';
-              value += date;
-            }
-          }
-          return value;
-        },
-        false, [this](const int index) {
           const auto* item = itemAtVisibleIndex(static_cast<size_t>(index));
           return item && RSS_ITEM_STATE.isRead(feed.url, item->key);
         },

@@ -49,9 +49,8 @@ class RssItemListActivity final : public Activity {
   unsigned long queueMessageUntil = 0;
   std::string errorMessage;
   std::string statusMessage;
-  // Kept short because it shares the header subtitle with the local count.
-  // This makes a stale/offline-preserved snapshot visible without adding a
-  // second full-screen pass or delaying the cache-first first paint.
+  // Routine current/cached states stay out of the compact header. Only stale
+  // or refresh-failed states are shown beside the local article count.
   std::string cacheState;
   bool listFontSessionActive = false;
   uint8_t savedFontFamily = 0;
