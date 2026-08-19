@@ -256,7 +256,7 @@ class BaseTheme {
                         const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
                         const std::function<bool(int index)>& rowDimmed = nullptr,
                         const std::function<bool(int index)>& isHeader = nullptr, int rowHeightScale = 1,
-                        bool showSelection = true) const;
+                        bool showSelection = true, bool subtitleIsTitleContinuation = false) const;
   virtual void drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle = nullptr,
                           bool readerContext = false) const;
   virtual void drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label,

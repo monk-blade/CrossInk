@@ -274,7 +274,12 @@ void CrossPointWebServer::begin() {
   LOG_DBG("WEB", "Network mode: %s", apMode ? "AP" : "STA");
 
   LOG_DBG("WEB", "Creating web server on port %d...", port);
-  server.reset(new WebServer(port));
+  server = makeUniqueNoThrow<WebServer>(port);
+  if (!server) {
+    LOG_ERR("WEB", "OOM: WebServer (%u bytes, free=%u maxAlloc=%u)", static_cast<unsigned>(sizeof(WebServer)),
+            ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    return;
+  }
 
   // Disable WiFi sleep to improve responsiveness and prevent 'unreachable' errors.
   // This is critical for reliable web server operation on ESP32.
@@ -285,11 +290,6 @@ void CrossPointWebServer::begin() {
 
   // Note: WebServer class doesn't have setNoDelay() in the standard ESP32 library.
   // We rely on disabling WiFi sleep for responsiveness.
-
-  if (!server) {
-    LOG_ERR("WEB", "Failed to create WebServer!");
-    return;
-  }
 
   // Add Access-Control-Allow-* headers to every response so web-based clients
   // and PWAs on other origins can use the HTTP API. Preflight OPTIONS requests
@@ -348,12 +348,25 @@ void CrossPointWebServer::begin() {
   // Collect WebDAV headers and register handler
   const char* davHeaders[] = {"Depth", "Destination", "Overwrite", "If", "Lock-Token", "Timeout"};
   server->collectHeaders(davHeaders, 6);
-  server->addHandler(new WebDAVHandler());  // Note: WebDAVHandler will be deleted by WebServer when server is stopped
+  auto webDavHandler = makeUniqueNoThrow<WebDAVHandler>();
+  if (!webDavHandler) {
+    LOG_ERR("WEB", "OOM: WebDAV handler (%u bytes)", static_cast<unsigned>(sizeof(WebDAVHandler)));
+    server.reset();
+    return;
+  }
+  // WebServer owns and deletes registered handlers after this transfer.
+  server->addHandler(webDavHandler.release());
 
   server->begin();
 
   // Start WebSocket server for fast binary uploads
-  wsServer.reset(new WebSocketsServer(wsPort));
+  wsServer = makeUniqueNoThrow<WebSocketsServer>(wsPort);
+  if (!wsServer) {
+    LOG_ERR("WEB", "OOM: WebSocket server (%u bytes)", static_cast<unsigned>(sizeof(WebSocketsServer)));
+    server->stop();
+    server.reset();
+    return;
+  }
   wsInstance = const_cast<CrossPointWebServer*>(this);
   wsServer->begin();
   wsServer->onEvent(wsEventCallback);

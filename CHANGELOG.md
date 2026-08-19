@@ -7,7 +7,8 @@
 
 ### Fixed
 
-- FreshRSS article lists now give titles the full row width and use the second line for title overflow, showing dates only when a title already fits instead of sacrificing most of each row to metadata.
+- Low or fragmented memory on X3 now fails image decoding, XTC loading, or web-server startup cleanly instead of aborting on unchecked allocations.
+- FreshRSS article lists now give headlines the full row width and render both Comfortable-mode lines with consistent title typography instead of sacrificing space or hierarchy to row metadata.
 - Book titles and authors in scripts that need an SD-card font (such as Gujarati) no longer render as diamond placeholders on the Home screen when the same screen also draws text in a built-in font.
 - Book titles and authors on the Recent Books screen now render correctly in scripts that need an SD-card font, instead of showing diamond placeholders for characters the previously drawn screen did not already use.
 - The RSS feed list, RSS article list, EPUB status bar, and chapter selection screens no longer show placeholder glyphs for Gujarati text on their first paint.

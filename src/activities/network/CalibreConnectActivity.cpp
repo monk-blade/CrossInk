@@ -3,6 +3,7 @@
 #include <ESPmDNS.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <Memory.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 
@@ -87,7 +88,14 @@ void CalibreConnectActivity::startWebServer() {
     LOG_DBG("CAL", "mDNS started: http://%s.local/", HOSTNAME);
   }
 
-  webServer.reset(new CrossPointWebServer());
+  webServer = makeUniqueNoThrow<CrossPointWebServer>();
+  if (!webServer) {
+    LOG_ERR("CAL", "OOM: web server (%u bytes, free=%u maxAlloc=%u)",
+            static_cast<unsigned>(sizeof(CrossPointWebServer)), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    state = CalibreConnectState::ERROR;
+    requestUpdate();
+    return;
+  }
   webServer->begin();
 
   if (webServer->isRunning()) {

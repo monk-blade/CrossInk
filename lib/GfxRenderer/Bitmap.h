@@ -3,6 +3,7 @@
 #include <HalStorage.h>
 
 #include <cstdint>
+#include <memory>
 
 #include "BitmapHelpers.h"
 
@@ -57,6 +58,7 @@ enum class BmpReaderError : uint8_t {
   SeekPixelDataFailed,
   BufferTooSmall,
   OomRowBuffer,
+  OomDitherer,
   ShortReadRow,
 };
 
@@ -65,7 +67,7 @@ class Bitmap {
   static const char* errorToString(BmpReaderError err);
 
   explicit Bitmap(HalFile& file, bool dithering = false) : file(file), dithering(dithering) {}
-  ~Bitmap();
+  ~Bitmap() = default;
   BmpReaderError parseHeaders();
   BmpReaderError readNextRow(uint8_t* data, uint8_t* rowBuffer) const;
   BmpReaderError rewindToData() const;
@@ -94,10 +96,8 @@ class Bitmap {
   uint8_t paletteLum[256] = {};
 
   // Dithering state (mutable for const methods)
-  mutable int16_t* errorCurRow = nullptr;
-  mutable int16_t* errorNextRow = nullptr;
   mutable int prevRowY = -1;  // Track row progression for error propagation
 
-  mutable AtkinsonDitherer* atkinsonDitherer = nullptr;
-  mutable FloydSteinbergDitherer* fsDitherer = nullptr;
+  mutable std::unique_ptr<AtkinsonDitherer> atkinsonDitherer;
+  mutable std::unique_ptr<FloydSteinbergDitherer> fsDitherer;
 };

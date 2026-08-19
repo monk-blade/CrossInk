@@ -10,6 +10,7 @@
 #include <Bitmap.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -40,7 +41,11 @@ bool thumbnailHasDimensions(const std::string& path, const uint16_t width, const
 
 bool Xtc::load() {
   // Initialize parser
-  parser.reset(new xtc::XtcParser());
+  parser = makeUniqueNoThrow<xtc::XtcParser>();
+  if (!parser) {
+    LOG_ERR("XTC", "OOM: parser (%u bytes)", static_cast<unsigned>(sizeof(xtc::XtcParser)));
+    return false;
+  }
 
   // Open XTC file
   xtc::XtcError err = parser->open(filepath.c_str());

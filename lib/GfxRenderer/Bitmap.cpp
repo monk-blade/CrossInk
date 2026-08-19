@@ -1,7 +1,11 @@
 #include "Bitmap.h"
 
+#include <Logging.h>
+#include <Memory.h>
+
 #include <cstdlib>
 #include <cstring>
+#include <utility>
 
 // ============================================================================
 // IMAGE PROCESSING OPTIONS
@@ -12,14 +16,6 @@
 // For cover images, dithering is done in JpegToBmpConverter.cpp instead.
 constexpr bool USE_ATKINSON = true;  // Use Atkinson dithering instead of Floyd-Steinberg
 // ============================================================================
-
-Bitmap::~Bitmap() {
-  delete[] errorCurRow;
-  delete[] errorNextRow;
-
-  delete atkinsonDitherer;
-  delete fsDitherer;
-}
 
 uint16_t Bitmap::readLE16(HalFile& f) {
   const int c0 = f.read();
@@ -76,6 +72,8 @@ const char* Bitmap::errorToString(BmpReaderError err) {
 
     case BmpReaderError::OomRowBuffer:
       return "OomRowBuffer";
+    case BmpReaderError::OomDitherer:
+      return "OomDitherer";
     case BmpReaderError::ShortReadRow:
       return "ShortReadRow";
   }
@@ -85,6 +83,12 @@ const char* Bitmap::errorToString(BmpReaderError err) {
 BmpReaderError Bitmap::parseHeaders() {
   if (!file) return BmpReaderError::FileInvalid;
   if (!file.seek(0)) return BmpReaderError::SeekStartFailed;
+
+  // A caller may retry parsing the same object after a file or memory failure.
+  // Drop prior per-image state so ownership is not leaked and dithering never uses stale rows.
+  atkinsonDitherer.reset();
+  fsDitherer.reset();
+  prevRowY = -1;
 
   // --- BMP FILE HEADER ---
   const uint16_t bfType = readLE16(file);
@@ -168,9 +172,19 @@ BmpReaderError Bitmap::parseHeaders() {
   const bool highColor = !nativePalette;
   if (highColor && dithering) {
     if (USE_ATKINSON) {
-      atkinsonDitherer = new AtkinsonDitherer(width);
+      auto ditherer = makeUniqueNoThrow<AtkinsonDitherer>(width);
+      if (!ditherer || !ditherer->isValid()) {
+        LOG_ERR("BMP", "OOM: Atkinson dither buffers for width %d", width);
+        return BmpReaderError::OomDitherer;
+      }
+      atkinsonDitherer = std::move(ditherer);
     } else {
-      fsDitherer = new FloydSteinbergDitherer(width);
+      auto ditherer = makeUniqueNoThrow<FloydSteinbergDitherer>(width);
+      if (!ditherer || !ditherer->isValid()) {
+        LOG_ERR("BMP", "OOM: Floyd-Steinberg dither buffers for width %d", width);
+        return BmpReaderError::OomDitherer;
+      }
+      fsDitherer = std::move(ditherer);
     }
   }
 

@@ -18,7 +18,6 @@
 #include "CrossPointSettings.h"
 #include "FreshRssCache.h"
 #include "FreshRssSyncRunner.h"
-#include "RssDateFormatter.h"
 #include "RssItemStateStore.h"
 #include "activities/reader/ReaderUtils.h"
 #include "SdCardFontSystem.h"
@@ -524,7 +523,6 @@ void RssItemListActivity::render(RenderLock&&) {
     // EpubReaderChapterSelectionActivity::render(): doing on-demand glyph
     // loads in that hot path is noticeably sluggish for anything with more
     // unique glyphs than the 8-slot overflow cache holds.
-    const bool showDates = SETTINGS.rssDateDisplay != CrossPointSettings::RSS_HIDE_DATE;
     const bool showSubtitle = listHasSubtitle();
     const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, showSubtitle);
     const int pageStartIndex = pageItems > 0 ? (selectorIndex / pageItems) * pageItems : 0;
@@ -537,13 +535,14 @@ void RssItemListActivity::render(RenderLock&&) {
     }
     const int pageEndIndex = std::min(static_cast<int>(visibleCount()), pageStartIndex + std::max(1, pageItems));
 
-    // Article titles own the row. Comfortable mode spends its second line on
-    // title overflow; only a title that already fits on line one yields that
-    // low-priority space to a compact date. The conservative width remains
-    // inside every theme's selection padding and scroll gutter, and drawList()
-    // performs the final theme-specific clipping.
-    constexpr int titleSideBudget = 48;
+    // Article titles own the row. Comfortable mode uses both lines for the
+    // headline; compact mode keeps one full-width line. Leave only the active
+    // theme's selection padding and scroll gutter outside the wrap width.
+    const bool roundedRaff = SETTINGS.uiTheme == CrossPointSettings::ROUNDEDRAFF;
+    const int titleSideBudget =
+        roundedRaff ? 36 : std::max(16, metrics.scrollBarWidth + metrics.scrollBarRightOffset + 16);
     const int titleWidth = std::max(40, screen.width - metrics.contentSidePadding * 2 - titleSideBudget);
+    const auto titleStyle = roundedRaff ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
     std::vector<ArticleRowText> visibleRows;
     visibleRows.reserve(static_cast<size_t>(std::max(0, pageEndIndex - pageStartIndex)));
     std::string visibleTitles;
@@ -556,15 +555,14 @@ void RssItemListActivity::render(RenderLock&&) {
         continue;
       }
 
-      auto titleLines = renderer.wrappedText(UI_10_FONT_ID, item->title.c_str(), titleWidth, showSubtitle ? 2 : 1);
+      auto titleLines =
+          renderer.wrappedText(UI_10_FONT_ID, item->title.c_str(), titleWidth, showSubtitle ? 2 : 1, titleStyle);
       if (!titleLines.empty()) row.primary = std::move(titleLines[0]);
       if (showSubtitle) {
         if (titleLines.size() > 1) {
           row.secondary = std::move(titleLines[1]);
         } else if (item->unavailable) {
           row.secondary = item->subtitle;
-        } else if (showDates) {
-          row.secondary = RssDateFormatter::formatListCompact(item->date);
         }
       }
       visibleRows.push_back(std::move(row));
@@ -582,11 +580,8 @@ void RssItemListActivity::render(RenderLock&&) {
       auto* fcm = renderer.getFontCacheManager();
       if (fcm) {
         prewarmScope.emplace(fcm->createPrewarmScope());
-        renderer.drawText(UI_10_FONT_ID, 0, 0, visibleTitles.c_str(), true, EpdFontFamily::REGULAR);
-        renderer.drawText(UI_10_FONT_ID, 0, 0, "\xe2\x80\xa6", true, EpdFontFamily::REGULAR);
-        if (showSubtitle) {
-          renderer.drawText(SMALL_FONT_ID, 0, 0, visibleTitles.c_str(), true, EpdFontFamily::REGULAR);
-        }
+        renderer.drawText(UI_10_FONT_ID, 0, 0, visibleTitles.c_str(), true, titleStyle);
+        renderer.drawText(UI_10_FONT_ID, 0, 0, "\xe2\x80\xa6", true, titleStyle);
         prewarmScope->endScanAndPrewarm();
       }
     }
@@ -611,7 +606,7 @@ void RssItemListActivity::render(RenderLock&&) {
           const auto* item = itemAtVisibleIndex(static_cast<size_t>(index));
           return item && RSS_ITEM_STATE.isRead(feed.url, item->key);
         },
-        nullptr, 1, true);
+        nullptr, 1, true, showSubtitle);
   }
 
   if (!queueMessage.empty() && millis() < queueMessageUntil) {

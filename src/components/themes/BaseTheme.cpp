@@ -296,7 +296,7 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
                          const std::function<std::string(int index)>& rowValue, bool highlightValue,
                          const std::function<bool(int index)>& rowDimmed,
                          const std::function<bool(int index)>& isHeader, const int rowHeightScale,
-                         const bool showSelection) const {
+                         const bool showSelection, const bool subtitleIsTitleContinuation) const {
   const int rowScale = std::max(1, rowHeightScale);
   int rowHeight =
       ((rowSubtitle != nullptr) ? BaseMetrics::values.listWithSubtitleRowHeight : BaseMetrics::values.listRowHeight) *
@@ -394,9 +394,19 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
     if (rowSubtitle != nullptr) {
       std::string subtitleText = rowSubtitle(i);
       if (!subtitleText.empty()) {
-        auto subtitle = renderer.truncatedText(SMALL_FONT_ID, subtitleText.c_str(), rowTextWidth);
-        renderer.drawText(SMALL_FONT_ID, rect.x + BaseMetrics::values.contentSidePadding, itemY + 22, subtitle.c_str(),
+        const int subtitleFontId = subtitleIsTitleContinuation ? UI_10_FONT_ID : SMALL_FONT_ID;
+        auto subtitle = renderer.truncatedText(subtitleFontId, subtitleText.c_str(), rowTextWidth);
+        const int subtitleY = itemY + 22;
+        renderer.drawText(subtitleFontId, rect.x + BaseMetrics::values.contentSidePadding, subtitleY, subtitle.c_str(),
                           i != selectedIndex);
+        if (subtitleIsTitleContinuation && rowDimmed && rowDimmed(i) && i != selectedIndex) {
+          const int subtitleWidth = renderer.getTextWidth(subtitleFontId, subtitle.c_str());
+          const int subtitleLineHeight = renderer.getLineHeight(subtitleFontId);
+          const int subtitleX = rect.x + BaseMetrics::values.contentSidePadding;
+          for (int py = subtitleY; py < subtitleY + subtitleLineHeight; py++)
+            for (int px = subtitleX; px < subtitleX + subtitleWidth; px++)
+              if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+        }
       }
     }
 

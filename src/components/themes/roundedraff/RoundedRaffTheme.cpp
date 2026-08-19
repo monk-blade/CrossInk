@@ -282,14 +282,15 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
                                 const std::function<std::string(int index)>& rowValue, bool highlightValue,
                                 const std::function<bool(int index)>& rowDimmed,
                                 const std::function<bool(int index)>& isHeader, const int rowHeightScale,
-                                const bool showSelection) const {
+                                const bool showSelection, const bool subtitleIsTitleContinuation) const {
   (void)rowIcon;
   (void)highlightValue;
   (void)rowDimmed;
   const int rowScale = std::max(1, rowHeightScale);
   const bool hasSubtitle = static_cast<bool>(rowSubtitle);
   const int titleLineHeight = renderer.getLineHeight(kTitleFontId);
-  const int subtitleLineHeight = renderer.getLineHeight(kSubtitleFontId);
+  const int subtitleFontId = subtitleIsTitleContinuation ? kTitleFontId : kSubtitleFontId;
+  const int subtitleLineHeight = renderer.getLineHeight(subtitleFontId);
   constexpr int subtitleTopPadding = 10;
   constexpr int subtitleBottomPadding = 10;
   constexpr int subtitleInterLineGap = 4;
@@ -375,7 +376,7 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
       const std::string subtitleRaw = rowSubtitle(i);
       auto title = renderer.truncatedText(kTitleFontId, rowTitle(i).c_str(), textAreaWidth, EpdFontFamily::BOLD);
 
-      if (subtitleRaw.empty()) {
+      if (subtitleRaw.empty() && !subtitleIsTitleContinuation) {
         // If there is no subtitle/author, center title vertically in the full row.
         const int centeredTitleY = rowY + (currentRowHeight - titleLineHeight) / 2;
         renderer.drawText(kTitleFontId, rowX + kInteractiveInsetX, centeredTitleY, title.c_str(), !isSelected,
@@ -383,12 +384,14 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
       } else {
         const int titleY = rowY + subtitleTopPadding;
         const int subtitleY = titleY + titleLineHeight + subtitleInterLineGap;
-        auto subtitle =
-            renderer.truncatedText(kSubtitleFontId, subtitleRaw.c_str(), textAreaWidth, EpdFontFamily::REGULAR);
+        const auto subtitleStyle = subtitleIsTitleContinuation ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+        auto subtitle = renderer.truncatedText(subtitleFontId, subtitleRaw.c_str(), textAreaWidth, subtitleStyle);
         renderer.drawText(kTitleFontId, rowX + kInteractiveInsetX, titleY, title.c_str(), !isSelected,
                           EpdFontFamily::BOLD);
-        renderer.drawText(kSubtitleFontId, rowX + kInteractiveInsetX, subtitleY, subtitle.c_str(), !isSelected,
-                          EpdFontFamily::REGULAR);
+        if (!subtitle.empty()) {
+          renderer.drawText(subtitleFontId, rowX + kInteractiveInsetX, subtitleY, subtitle.c_str(), !isSelected,
+                            subtitleStyle);
+        }
       }
     } else {
       auto title = renderer.truncatedText(kTitleFontId, rowTitle(i).c_str(), textAreaWidth, EpdFontFamily::BOLD);

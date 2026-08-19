@@ -297,7 +297,13 @@ void CrossPointWebServerActivity::startAccessPoint() {
   // Start DNS server for captive portal behavior
   // This redirects all DNS queries to our IP, making any domain typed resolve to us
   stopDnsServer();
-  dnsServer = new DNSServer();
+  auto newDnsServer = makeUniqueNoThrow<DNSServer>();
+  if (!newDnsServer) {
+    LOG_ERR("WEBACT", "OOM: DNS server (%u bytes)", static_cast<unsigned>(sizeof(DNSServer)));
+    exitToOrigin();
+    return;
+  }
+  dnsServer = newDnsServer.release();
   dnsServer->setErrorReplyCode(DNSReplyCode::NoError);
   dnsServer->start(DNS_PORT, "*", apIP);
 
@@ -309,7 +315,13 @@ void CrossPointWebServerActivity::startAccessPoint() {
 
 void CrossPointWebServerActivity::startWebServer() {
   // Create the web server instance
-  webServer.reset(new CrossPointWebServer());
+  webServer = makeUniqueNoThrow<CrossPointWebServer>();
+  if (!webServer) {
+    LOG_ERR("WEBACT", "OOM: web server (%u bytes, free=%u maxAlloc=%u)",
+            static_cast<unsigned>(sizeof(CrossPointWebServer)), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    exitToOrigin();
+    return;
+  }
   webServer->begin();
 
   if (webServer->isRunning()) {

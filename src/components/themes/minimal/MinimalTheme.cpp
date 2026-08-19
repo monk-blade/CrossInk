@@ -481,11 +481,12 @@ void MinimalTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCoun
                             const std::function<std::string(int index)>& rowValue, bool highlightValue,
                             const std::function<bool(int index)>& rowDimmed,
                             const std::function<bool(int index)>& isHeader, const int rowHeightScale,
-                            const bool showSelection) const {
+                            const bool showSelection, const bool subtitleIsTitleContinuation) const {
   const bool compactFileRows = rowSubtitle != nullptr && rowIcon != nullptr && rowValue != nullptr;
   if (!compactFileRows) {
     LyraTheme::drawList(renderer, rect, itemCount, selectedIndex, rowTitle, rowSubtitle, rowIcon, rowValue,
-                        highlightValue, rowDimmed, isHeader, rowHeightScale, showSelection);
+                        highlightValue, rowDimmed, isHeader, rowHeightScale, showSelection,
+                        subtitleIsTitleContinuation);
     return;
   }
 

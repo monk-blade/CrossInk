@@ -217,9 +217,10 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
                          const std::function<std::string(int index)>& rowValue, bool highlightValue,
                          const std::function<bool(int index)>& rowDimmed,
                          const std::function<bool(int index)>& isHeader, const int rowHeightScale,
-                         const bool showSelection) const {
+                         const bool showSelection, const bool subtitleIsTitleContinuation) const {
   drawListWithMetrics(renderer, rect, itemCount, selectedIndex, rowTitle, rowSubtitle, rowIcon, rowValue,
-                      highlightValue, rowDimmed, isHeader, LyraMetrics::values, false, rowHeightScale, showSelection);
+                      highlightValue, rowDimmed, isHeader, LyraMetrics::values, false, rowHeightScale, showSelection,
+                      subtitleIsTitleContinuation);
 }
 
 void LyraTheme::drawListWithMetrics(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
@@ -229,8 +230,8 @@ void LyraTheme::drawListWithMetrics(const GfxRenderer& renderer, Rect rect, int 
                                     const std::function<std::string(int index)>& rowValue, bool highlightValue,
                                     const std::function<bool(int index)>& rowDimmed,
                                     const std::function<bool(int index)>& isHeader, const ThemeMetrics& metrics,
-                                    const bool invertSelectedRows, const int rowHeightScale,
-                                    const bool showSelection) const {
+                                    const bool invertSelectedRows, const int rowHeightScale, const bool showSelection,
+                                    const bool subtitleIsTitleContinuation) const {
   const int rowScale = std::max(1, rowHeightScale);
   int rowHeight = ((rowSubtitle != nullptr) ? metrics.listWithSubtitleRowHeight : metrics.listRowHeight) * rowScale;
   if (itemCount <= 0) return;
@@ -357,8 +358,17 @@ void LyraTheme::drawListWithMetrics(const GfxRenderer& renderer, Rect rect, int 
     if (rowSubtitle != nullptr) {
       // Draw subtitle
       std::string subtitleText = rowSubtitle(i);
-      auto subtitle = renderer.truncatedText(SMALL_FONT_ID, subtitleText.c_str(), rowTextWidth);
-      renderer.drawText(SMALL_FONT_ID, textX, itemY + 30, subtitle.c_str(), foreground);
+      const int subtitleFontId = subtitleIsTitleContinuation ? UI_10_FONT_ID : SMALL_FONT_ID;
+      auto subtitle = renderer.truncatedText(subtitleFontId, subtitleText.c_str(), rowTextWidth);
+      const int subtitleY = itemY + 30;
+      renderer.drawText(subtitleFontId, textX, subtitleY, subtitle.c_str(), foreground);
+      if (subtitleIsTitleContinuation && rowDimmed && rowDimmed(i) && !selectedRow) {
+        const int subtitleWidth = renderer.getTextWidth(subtitleFontId, subtitle.c_str());
+        const int subtitleLineHeight = renderer.getLineHeight(subtitleFontId);
+        for (int py = subtitleY; py < subtitleY + subtitleLineHeight; py++)
+          for (int px = textX; px < textX + subtitleWidth; px++)
+            if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+      }
     }
 
     // Draw value

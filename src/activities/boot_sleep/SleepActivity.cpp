@@ -7,6 +7,7 @@
 #include <HalGPIO.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Memory.h>
 #include <PNGdec.h>
 #include <Xtc.h>
 
@@ -95,13 +96,17 @@ struct PngOverlayCtx {
 
 // PNGdec file I/O callbacks — mirror the pattern in PngToFramebufferConverter.cpp.
 void* pngSleepOpen(const char* filename, int32_t* size) {
-  FsFile* f = new FsFile();
+  auto f = makeUniqueNoThrow<FsFile>();
+  if (!f) {
+    LOG_ERR("SLP", "OOM: PNG overlay file wrapper");
+    return nullptr;
+  }
   if (!Storage.openFileForRead("SLP", std::string(filename), *f)) {
-    delete f;
+    f->close();
     return nullptr;
   }
   *size = f->size();
-  return f;
+  return f.release();  // PNGdec owns the callback handle until pngSleepClose().
 }
 void pngSleepClose(void* handle) {
   FsFile* f = reinterpret_cast<FsFile*>(handle);
