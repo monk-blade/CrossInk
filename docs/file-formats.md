@@ -256,8 +256,9 @@ Binary layout:
 (This heading previously said "Version 59" — check `SECTION_FILE_VERSION` in
 `lib/Epub/Epub/Section.cpp` directly if this drifts again. Version 64 rebuilds
 sections after CSS `!important` length values began retaining their units, so
-paragraph indents and spacing are laid out at the intended size. The ImHex
-pattern below is still accurate.)
+paragraph indents and spacing are laid out at the intended size. Suspended
+incremental section caches use marker `0xFA` for the same invalidation. The
+ImHex pattern below is still accurate.)
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the

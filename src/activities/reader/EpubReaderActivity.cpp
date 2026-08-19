@@ -5287,6 +5287,15 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     }
     pageLoadRetryCount = 0;
 
+    if (section->isBuilding()) {
+      // The deserialized Page owns all data needed below. Close the resumable
+      // parser input and section writer before SD-font prewarm and inline-image
+      // rendering open their own files. X4/SdFat can reject those additional
+      // opens while an incremental build still holds both handles, which made
+      // only the first displayed page fall back to replacement-glyph tofu.
+      section->releaseBuildFile();
+    }
+
     // Preview pages are transient note windows, not full chapter pages with reusable footnote metadata.
     if (activeFootnotePreview) {
       currentPageFootnotes.clear();

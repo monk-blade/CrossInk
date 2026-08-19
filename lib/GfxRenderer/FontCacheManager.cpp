@@ -66,36 +66,33 @@ void FontCacheManager::resetStats() {
 bool FontCacheManager::isScanning() const { return scanMode_ == ScanMode::Scanning; }
 
 void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::Style style) {
+  const uint8_t styleIndex = static_cast<uint8_t>(style) & 0x03;
+  ScanBucket* bucket = nullptr;
+  for (uint8_t i = 0; i < scanBucketCount_; ++i) {
+    if (scanBuckets_[i].fontId == fontId && scanBuckets_[i].styleIndex == styleIndex) {
+      bucket = &scanBuckets_[i];
+      break;
+    }
+  }
+  if (!bucket) {
+    if (scanBucketCount_ >= scanBuckets_.size()) {
+      scanOverflow_ = true;
+      return;
+    }
+    bucket = &scanBuckets_[scanBucketCount_++];
+    bucket->fontId = fontId;
+    bucket->styleIndex = styleIndex;
+    bucket->text.clear();
+    if (bucket->text.capacity() < SCAN_BUCKET_RESERVE) bucket->text.reserve(SCAN_BUCKET_RESERVE);
+  }
+
   if ((style & EpdFontFamily::SMALL_CAPS) != 0) {
     for (const char* p = text; *p != '\0'; ++p) {
-      scanText_.push_back((*p >= 'a' && *p <= 'z') ? static_cast<char>(*p - ('a' - 'A')) : *p);
+      bucket->text.push_back((*p >= 'a' && *p <= 'z') ? static_cast<char>(*p - ('a' - 'A')) : *p);
     }
   } else {
-    scanText_ += text;
+    bucket->text += text;
   }
-  // Font IDs are name hashes and are routinely negative (see fontIds.h, where 0
-  // is the reserved "not found" sentinel), so a `< 0` test never meant "unset":
-  // it let every later recordText() overwrite the font chosen by the first one.
-  // A scope that mixed an SD fallback string with a built-in one (e.g. a
-  // Gujarati book title followed by a Latin ellipsis) therefore prewarmed the
-  // built-in font and left the SD font cold, and cold SD glyphs render as tofu.
-  //
-  // Lock onto the first recorded font, but let an SD-card font take precedence:
-  // built-in fonts decompress glyphs on demand, while SD glyphs are only
-  // reachable through the prewarmed page cache (EpdFontFamily::findGlyphData
-  // does not consult the on-demand miss handler).
-  const bool scanFontIsSd = sdCardFonts_.count(scanFontId_) > 0;
-  if (scanFontId_ == 0 || (!scanFontIsSd && sdCardFonts_.count(fontId) > 0)) {
-    scanFontId_ = fontId;
-  }
-  const uint8_t baseStyle = static_cast<uint8_t>(style) & 0x03;
-  const unsigned char* p = reinterpret_cast<const unsigned char*>(text);
-  uint32_t cpCount = 0;
-  while (*p) {
-    if ((*p & 0xC0) != 0x80) cpCount++;
-    p++;
-  }
-  scanStyleCounts_[baseStyle] += cpCount;
 }
 
 // --- PrewarmScope implementation ---
@@ -105,28 +102,28 @@ FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager, const Pr
   manager_->scanMode_ = ScanMode::Scanning;
   manager_->clearCache();
   manager_->resetStats();
-  manager_->scanText_.clear();
-  manager_->scanText_.reserve(2048);  // Pre-allocate to avoid heap fragmentation from repeated concat
-  memset(manager_->scanStyleCounts_, 0, sizeof(manager_->scanStyleCounts_));
-  manager_->scanFontId_ = 0;  // 0 is the reserved "no font" sentinel (fontIds.h)
+  for (auto& bucket : manager_->scanBuckets_) bucket.text.clear();
+  manager_->scanBucketCount_ = 0;
+  manager_->scanOverflow_ = false;
 }
 
 bool FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   manager_->scanMode_ = ScanMode::None;
-  if (manager_->scanText_.empty()) return true;
-
-  // Build style bitmask from all styles that appeared during the scan
-  uint8_t styleMask = 0;
-  for (uint8_t i = 0; i < 4; i++) {
-    if (manager_->scanStyleCounts_[i] > 0) styleMask |= (1 << i);
+  bool ok = !manager_->scanOverflow_;
+  if (manager_->scanOverflow_) {
+    LOG_ERR("FCM", "Prewarm scan exceeded %u font/style buckets", FontCacheManager::MAX_SCAN_BUCKETS);
   }
-  if (styleMask == 0) styleMask = 1;  // default to regular
 
-  const bool ok = manager_->prewarmCache(manager_->scanFontId_, manager_->scanText_.c_str(), styleMask, policy_);
-
-  // Keep the grown capacity around so the next page can reuse it without
-  // another allocate-grow-shrink cycle.
-  manager_->scanText_.clear();
+  for (uint8_t i = 0; i < manager_->scanBucketCount_; ++i) {
+    auto& bucket = manager_->scanBuckets_[i];
+    if (!bucket.text.empty()) {
+      ok = manager_->prewarmCache(bucket.fontId, bucket.text.c_str(), 1u << bucket.styleIndex, policy_) && ok;
+    }
+    // Keep each bucket's grown capacity so the next page can reuse it without
+    // another allocate-grow-shrink cycle.
+    bucket.text.clear();
+  }
+  manager_->scanBucketCount_ = 0;
   return ok;
 }
 

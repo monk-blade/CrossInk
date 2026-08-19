@@ -2,6 +2,8 @@
 
 #include <EpdFontFamily.h>
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -49,15 +51,28 @@ class FontCacheManager {
   PrewarmScope createPrewarmScope(PreparationPolicy policy = PreparationPolicy::Normal);
 
  private:
+  static constexpr uint8_t MAX_SCAN_BUCKETS = 8;
+  static constexpr size_t SCAN_BUCKET_RESERVE = 512;
+
+  struct ScanBucket {
+    int fontId = 0;
+    uint8_t styleIndex = 0;
+    std::string text;
+  };
+
   const std::map<int, EpdFontFamily>& fontMap_;
   const std::map<int, SdCardFont*>& sdCardFonts_;
   FontDecompressor* fontDecompressor_ = nullptr;
 
   enum class ScanMode : uint8_t { None, Scanning };
   ScanMode scanMode_ = ScanMode::None;
-  std::string scanText_;
-  uint32_t scanStyleCounts_[4] = {};
-  // 0 = unset. Font IDs are name hashes that may be negative, so 0 (reserved as
-  // the "not found" sentinel in fontIds.h) is the only safe "no font yet" value.
-  int scanFontId_ = 0;
+  // A page normally uses one reader font with up to four styles. UI cards can
+  // instead use separate size-matched SD fallback fonts for title, author, and
+  // stats. Keep those font/style inputs distinct so each file is prewarmed with
+  // only the glyphs it will actually draw. The fixed bucket table adds no
+  // render-time container allocation; each string retains its high-water
+  // capacity just like the former single scan string did.
+  std::array<ScanBucket, MAX_SCAN_BUCKETS> scanBuckets_{};
+  uint8_t scanBucketCount_ = 0;
+  bool scanOverflow_ = false;
 };
