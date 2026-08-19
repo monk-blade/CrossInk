@@ -251,12 +251,13 @@ Binary layout:
 
 ## `section.bin`
 
-### Version 63
+### Version 64
 
 (This heading previously said "Version 59" — check `SECTION_FILE_VERSION` in
-`lib/Epub/Epub/Section.cpp` directly if this drifts again; recent bumps were
-for Gujarati shaping fixes, not layout changes, so the ImHex pattern below is
-still accurate.)
+`lib/Epub/Epub/Section.cpp` directly if this drifts again. Version 64 rebuilds
+sections after CSS `!important` length values began retaining their units, so
+paragraph indents and spacing are laid out at the intended size. The ImHex
+pattern below is still accurate.)
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
@@ -334,7 +335,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 63
+#define EXPECTED_VERSION 64
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96

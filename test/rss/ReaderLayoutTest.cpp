@@ -16,9 +16,13 @@ TEST(ReaderLayout, UsesMinimumRaggednessAndHonorsContinuationGroups) {
   EXPECT_TRUE(breaks[0] != 2);  // the attached third token cannot start a line
 }
 
-TEST(ReaderLayout, GujaratiIndentSuppressionAndJustificationAreShared) {
-  EXPECT_EQ(ReaderLayout::firstLineIndent(true, true, 12), 0);
-  EXPECT_EQ(ReaderLayout::firstLineIndent(true, false, 12), 12);
+TEST(ReaderLayout, ForcedParagraphIndentUsesVisibleFontRelativeWidth) {
+  EXPECT_EQ(ReaderLayout::forcedParagraphIndent(true, 12, 16), 12);
+  EXPECT_EQ(ReaderLayout::forcedParagraphIndent(true, 0, 16), 16);
+  EXPECT_EQ(ReaderLayout::forcedParagraphIndent(false, 12, 16), 0);
+}
+
+TEST(ReaderLayout, JustificationExtraIsShared) {
   EXPECT_EQ(ReaderLayout::justificationExtra(11, 3), 3);
   EXPECT_EQ(ReaderLayout::justificationExtra(11, 0), 0);
 }

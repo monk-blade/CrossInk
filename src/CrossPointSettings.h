@@ -185,7 +185,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     BOOK_STYLE = 4,
     PARAGRAPH_ALIGNMENT_COUNT
   };
-  enum RSS_PARAGRAPH_INDENT { RSS_INDENT_NONE = 0, RSS_INDENT_FIRST_LINE = 1, RSS_PARAGRAPH_INDENT_COUNT };
+  enum RSS_PARAGRAPH_INDENT { RSS_INDENT_NONE = 0, RSS_FORCE_PARAGRAPH_INDENT = 1, RSS_PARAGRAPH_INDENT_COUNT };
   enum RSS_LIST_FILTER { RSS_ALL_ITEMS = 0, RSS_UNREAD_ONLY = 1, RSS_LIST_FILTER_COUNT };
   enum RSS_LIST_DENSITY { RSS_COMPACT_LIST = 0, RSS_COMFORTABLE_LIST = 1, RSS_LIST_DENSITY_COUNT };
   enum RSS_DATE_DISPLAY { RSS_HUMAN_DATE = 0, RSS_COMPACT_DATE = 1, RSS_HIDE_DATE = 2, RSS_DATE_DISPLAY_COUNT };
@@ -441,7 +441,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t rssFontPointSize = 12;
   uint8_t rssLineSpacing = NORMAL;
   uint8_t rssParagraphSpacing = NORMAL;
-  uint8_t rssParagraphIndent = RSS_INDENT_FIRST_LINE;
+  uint8_t rssParagraphIndent = RSS_FORCE_PARAGRAPH_INDENT;
   uint8_t rssParagraphAlignment = JUSTIFIED;
   uint8_t rssScreenMargin = 5;
   char rssSdFontFamilyName[32] = "Rasa";

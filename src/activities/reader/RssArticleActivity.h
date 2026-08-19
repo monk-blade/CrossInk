@@ -61,7 +61,6 @@ class RssArticleActivity final : public Activity {
   int marginTop = 0;
   int marginLeft = 0;
   int cachedFontId = 0;
-  int spaceWidth = 0;
   int lineHeight = 0;
   int pagesUntilFullRefresh = 1;
   bool rssFontSessionActive = false;

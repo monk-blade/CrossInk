@@ -616,7 +616,7 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   rssLineSpacing = clamp(doc["rssLineSpacing"] | rssLineSpacing, LINE_COMPRESSION_COUNT, NORMAL);
   rssParagraphSpacing = clamp(doc["rssParagraphSpacing"] | rssParagraphSpacing, LINE_COMPRESSION_COUNT, NORMAL);
   rssParagraphIndent = clamp(doc["rssParagraphIndent"] | rssParagraphIndent, RSS_PARAGRAPH_INDENT_COUNT,
-                             RSS_INDENT_FIRST_LINE);
+                             RSS_FORCE_PARAGRAPH_INDENT);
   rssParagraphAlignment = clamp(doc["rssParagraphAlignment"] | rssParagraphAlignment, PARAGRAPH_ALIGNMENT_COUNT,
                                 JUSTIFIED);
   rssScreenMargin = std::clamp<uint8_t>(doc["rssScreenMargin"] | rssScreenMargin, SCREEN_MARGIN_MIN, SCREEN_MARGIN_MAX);

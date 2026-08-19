@@ -53,12 +53,6 @@ uint32_t lastCodepoint(const std::string& word) {
   return utf8NextCodepoint(&ptr);
 }
 
-bool containsGujarati(const RichParagraph& paragraph) {
-  for (const auto& word : paragraph.words) {
-    if (GujaratiIntegration::containsGujarati(word.text)) return true;
-  }
-  return false;
-}
 }  // namespace
 
 void RssArticleActivity::onEnter() {
@@ -162,16 +156,13 @@ void RssArticleActivity::finalizeLine(std::vector<LineWord>&& words, const TextA
 
 void RssArticleActivity::wrapParagraph(const RichParagraph& paragraph) {
   const TextAlign align = resolveAlign(paragraph.align);
-  // Give normal left/justified paragraphs a modest first-line indent. HTML
-  // headings and explicitly aligned blocks keep their natural alignment.
-  // The EPUB reader deliberately suppresses synthetic indentation for
-  // Gujarati: a shaped syllable can begin with a visible mark, making a
-  // small artificial offset look like a detached/wrong first letter. Keep
-  // the RSS path consistent with that proven layout rule.
-  const int firstLineIndent = ReaderLayout::firstLineIndent(
-      SETTINGS.rssParagraphIndent == CrossPointSettings::RSS_INDENT_FIRST_LINE &&
+  // Force a visible, one-em-like indent on normal body paragraphs regardless
+  // of script or publisher styling. Centered/right-aligned semantic blocks
+  // and the centered article title keep their natural layout.
+  const int firstLineIndent = ReaderLayout::forcedParagraphIndent(
+      SETTINGS.rssParagraphIndent == CrossPointSettings::RSS_FORCE_PARAGRAPH_INDENT &&
           (align == TextAlign::LEFT || align == TextAlign::JUSTIFY),
-      containsGujarati(paragraph), std::max(spaceWidth * 3, 1));
+      renderer.getFontAscenderSize(cachedFontId), lineHeight);
   if (paragraph.words.empty()) return;
 
   // EPUB paragraphs use ParsedText's minimum-raggedness line breaker rather
@@ -254,7 +245,6 @@ void RssArticleActivity::buildWrappedLines() {
   lineHeight = std::max(1, renderer.getLineHeight(cachedFontId));
   linesPerPage = std::max(1, viewportHeight / lineHeight);
 
-  spaceWidth = renderer.getSpaceWidth(cachedFontId);
   titleParagraph = buildTitleParagraph();
 
   // Prime the SD card font's advance table for every style actually used in

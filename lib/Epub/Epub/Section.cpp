@@ -19,7 +19,9 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // v63: GujaratiShaper now recognizes U+0AF9 (ZHA) as a consonant and
 // U+0AC0 (ii-matra) as post-base, matching Unicode — words using either
 // codepoint in a reph-eligible position shape differently than before.
-constexpr uint8_t SECTION_FILE_VERSION = 63;
+// v64: CSS lengths with !important retain their units, changing paragraph
+// indents and box spacing that were previously cached as one or two pixels.
+constexpr uint8_t SECTION_FILE_VERSION = 64;
 // Suspended incremental build: valid pages plus LUTs and a parse-watermark trailer.
 // Change this with layout or payload changes so stale partial pages cannot resume
 // under a different layout contract.

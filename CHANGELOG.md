@@ -7,11 +7,13 @@
 
 ### Fixed
 
+- The FreshRSS “Force Paragraph Indentation” option now produces a visible first-line indent in article body paragraphs with custom and Gujarati fonts instead of being suppressed or collapsing to one pixel.
 - Low or fragmented memory on X3 now fails image decoding, XTC loading, or web-server startup cleanly instead of aborting on unchecked allocations.
 - FreshRSS article lists now give headlines the full row width and render both Comfortable-mode lines with consistent title typography instead of sacrificing space or hierarchy to row metadata.
 - Book titles and authors in scripts that need an SD-card font (such as Gujarati) no longer render as diamond placeholders on the Home screen when the same screen also draws text in a built-in font.
 - Book titles and authors on the Recent Books screen now render correctly in scripts that need an SD-card font, instead of showing diamond placeholders for characters the previously drawn screen did not already use.
 - The RSS feed list, RSS article list, EPUB status bar, and chapter selection screens no longer show placeholder glyphs for Gujarati text on their first paint.
+- Truncated Gujarati titles in the EPUB status bar now show an ellipsis instead of a diamond placeholder.
 - The in-book reader menu header no longer shows placeholder glyphs for Gujarati book or chapter titles; the title is now shaped and its SD-font glyphs are prewarmed before the header is drawn.
 - Very long titles or labels containing Gujarati text no longer lose characters past roughly the first line's worth of text.
 - Opening a cached FreshRSS article can no longer show the wrong article after a delta sync or cache cleanup reused the same on-disk position for a different article.
@@ -20,6 +22,7 @@
 - FreshRSS articles, subscriptions, and category ids longer than the internal size limit are now trimmed instead of silently dropping the whole article, subscription, or tag record they belong to.
 - Gujarati reph now correctly forms before the letter ZHA (U+0AF9) and correctly extends through a trailing ii-matra (U+0AC0), instead of leaving RA+virama undissolved or placing reph one character too early.
 - Text measurement for Gujarati on a built-in (non-SD) font no longer counts the zero-advance width of reph/subjoined-Ra/anusvara marks, so measured and drawn widths agree.
+- EPUB paragraph indents and spacing declared with CSS `!important` now retain their `em`, `rem`, `pt`, or percent units instead of collapsing to one or two pixels, so forced paragraph indents remain visible with custom combined fonts.
 
 ### Removed
 

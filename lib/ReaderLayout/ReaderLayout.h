@@ -19,8 +19,12 @@ inline int justificationExtra(const int spareSpace, const size_t gapCount) {
   return spareSpace / static_cast<int>(gapCount);
 }
 
-inline int firstLineIndent(const bool requested, const bool containsGujarati, const int normalIndent) {
-  return requested && !containsGujarati ? normalIndent : 0;
+inline int forcedParagraphIndent(const bool enabled, const int fontAscender, const int lineHeight) {
+  if (!enabled) return 0;
+  // Use a font-relative em-like width. Some SD fonts do not expose a usable
+  // standalone-space advance, so deriving this from three spaces can collapse
+  // a requested indent to a visually meaningless single pixel.
+  return std::max(1, fontAscender > 0 ? fontAscender : lineHeight);
 }
 
 inline std::vector<size_t> minimumRaggednessBreaks(const std::vector<uint16_t>& wordWidths,

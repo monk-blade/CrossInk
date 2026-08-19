@@ -6202,6 +6202,9 @@ void EpubReaderActivity::renderStatusBar() const {
       GujaratiIntegration::shapeUiString(shapedTitle);
       prewarmScope.emplace(fcm->createPrewarmScope());
       renderer.drawText(SMALL_FONT_ID, 0, 0, shapedTitle.c_str(), true, EpdFontFamily::REGULAR);
+      // drawStatusBar() may truncate the title with U+2026. Include it in the
+      // same SD-font prewarm so the truncation marker does not render as tofu.
+      renderer.drawText(SMALL_FONT_ID, 0, 0, "\xe2\x80\xa6", true, EpdFontFamily::REGULAR);
       prewarmScope->endScanAndPrewarm();
     }
   }

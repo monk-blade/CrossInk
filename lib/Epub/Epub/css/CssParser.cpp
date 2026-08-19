@@ -414,7 +414,11 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
   if (colonPos == std::string_view::npos || colonPos == 0) return;
 
   const std::string_view name = trimCssWhitespace(decl.substr(0, colonPos));
-  const std::string_view value = trimCssWhitespace(decl.substr(colonPos + 1));
+  // !important is declaration metadata, not part of the property value. Strip
+  // it once here so every parser (including length and shorthand properties)
+  // sees the same value. Otherwise "1.6em !important" falls back to 1.6 px
+  // because the unrecognized unit suffix is treated as pixels.
+  const std::string_view value = trimCssWhitespace(stripTrailingImportant(decl.substr(colonPos + 1)));
 
   if (name.empty() || value.empty()) return;
 
