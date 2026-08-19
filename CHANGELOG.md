@@ -9,7 +9,7 @@
 
 - Opening EPUB pages using an SD-card font no longer render as diamond placeholders on their first display: incremental indexing releases its resumable SD handles before rendering, and each font style prewarms only the glyphs it actually draws.
 - Gujarati author names on the Lyra Home card now prewarm their size-matched 10-point fallback font instead of incorrectly warming only the title's 12-point font.
-- FreshRSS sync now accepts chunked JSON responses without a `Content-Length` header instead of reporting “FreshRSS request failed.”
+- FreshRSS accounts with more navigation subscriptions or tags than fit in the device's bounded cache now keep the first supported set instead of aborting the entire sync with “FreshRSS request failed.”
 - The FreshRSS “Force Paragraph Indentation” option now produces a visible first-line indent in article body paragraphs with custom and Gujarati fonts instead of being suppressed or collapsing to one pixel.
 - Low or fragmented memory on X3 now fails image decoding, XTC loading, or web-server startup cleanly instead of aborting on unchecked allocations.
 - FreshRSS article lists now give headlines the full row width and render both Comfortable-mode lines with consistent title typography instead of sacrificing space or hierarchy to row metadata.

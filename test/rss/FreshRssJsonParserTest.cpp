@@ -148,3 +148,28 @@ TEST(FreshRssJsonParser, OverlongIdIsTruncatedNotDropped) {
   EXPECT_EQ(articles[0].id, longId.substr(0, 256));
   EXPECT_EQ(articles[1].id, "normal");
 }
+
+TEST(FreshRssJsonParser, TruncatesNavigationMetadataAtDeviceCapacity) {
+  std::string subscriptions = R"({"subscriptions":[)";
+  std::string tags = R"({"tags":[)";
+  for (int i = 0; i < 130; ++i) {
+    if (i != 0) {
+      subscriptions += ',';
+      tags += ',';
+    }
+    subscriptions += "{\"id\":\"feed/" + std::to_string(i) + "\",\"title\":\"Feed\"}";
+    tags += "{\"id\":\"user/-/label/" + std::to_string(i) + "\",\"label\":\"Tag\"}";
+  }
+  subscriptions += "]}";
+  tags += "]}";
+
+  FreshRssJsonParser subscriptionParser(FreshRssJsonParser::Document::Subscriptions);
+  subscriptionParser.feed(reinterpret_cast<const uint8_t*>(subscriptions.data()), subscriptions.size());
+  ASSERT_TRUE(subscriptionParser.finish());
+  EXPECT_EQ(subscriptionParser.metadata().subscriptions.size(), 128U);
+
+  FreshRssJsonParser tagParser(FreshRssJsonParser::Document::Tags);
+  tagParser.feed(reinterpret_cast<const uint8_t*>(tags.data()), tags.size());
+  ASSERT_TRUE(tagParser.finish());
+  EXPECT_EQ(tagParser.metadata().tags.size(), 128U);
+}

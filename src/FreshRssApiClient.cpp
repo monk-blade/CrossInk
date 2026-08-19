@@ -345,18 +345,30 @@ void FreshRssJsonParser::arrayEnd() {
 }
 
 void FreshRssJsonParser::finishSubscription() {
-  if (subscription.id.empty() || parsedMetadata.subscriptions.size() >= MAX_SUBSCRIPTIONS) {
+  if (subscription.id.empty()) {
     fail();
     return;
   }
-  parsedMetadata.subscriptions.push_back(std::move(subscription));
+  if (parsedMetadata.subscriptions.size() < MAX_SUBSCRIPTIONS) {
+    parsedMetadata.subscriptions.push_back(std::move(subscription));
+  } else if (!subscriptionsTruncated) {
+    subscriptionsTruncated = true;
+    LOG_ERR("FRSS", "Subscription list exceeds device limit (%u); ignoring remaining entries",
+            static_cast<unsigned>(MAX_SUBSCRIPTIONS));
+  }
 }
 void FreshRssJsonParser::finishTag() {
-  if (tag.id.empty() || parsedMetadata.tags.size() >= MAX_TAGS) {
+  if (tag.id.empty()) {
     fail();
     return;
   }
-  parsedMetadata.tags.push_back(std::move(tag));
+  if (parsedMetadata.tags.size() < MAX_TAGS) {
+    parsedMetadata.tags.push_back(std::move(tag));
+  } else if (!tagsTruncated) {
+    tagsTruncated = true;
+    LOG_ERR("FRSS", "Tag list exceeds device limit (%u); ignoring remaining entries",
+            static_cast<unsigned>(MAX_TAGS));
+  }
 }
 void FreshRssJsonParser::finishArticle() {
   if (article.id.empty() || parsedArticleCount == MAX_PARSED_ARTICLES || !sink) {
@@ -418,7 +430,10 @@ bool FreshRssApiClient::getJson(const std::string& path, const FreshRssJsonParse
   const bool fetched = HttpDownloader::fetchUrlWithHeaders(
       endpoint(path), [&parser](const uint8_t* data, size_t len) {
         parser.feed(data, len);
-        return parser.ok();
+        // A parser error is not a transport error. Drain the bounded response
+        // so the HTTP client can classify it accurately and discard/reuse the
+        // connection safely; parser.feed() becomes a no-op after failure.
+        return true;
       }, headers, shouldCancel);
   if (requestCompleted) *requestCompleted = fetched;
   if (!fetched || !parser.finish()) {

@@ -245,15 +245,10 @@ HttpDownloader::DownloadError runRequestDefault(const std::string& url, const ch
     responseLength = esp_http_client_fetch_headers(client);
     status = esp_http_client_get_status_code(client);
   }
-  if (status != 200) {
-    LOG_ERR("HTTP", "FreshRSS request returned status %d", status);
+  if (status != 200 || responseLength < 0) {
     esp_http_client_cleanup(client);
     return HttpDownloader::HTTP_ERROR;
   }
-  // esp_http_client_fetch_headers() returns -1 for a valid chunked response.
-  // FreshRSS commonly streams its JSON API that way, so absence of a
-  // Content-Length is not a transport failure; read until the HTTP client
-  // reports the response complete.
   sink.total = responseLength > 0 ? static_cast<size_t>(responseLength) : 0;
   auto buffer = makeUniqueNoThrow<char[]>(DEFAULT_DOWNLOAD_BUFFER_SIZE);
   if (!buffer) {

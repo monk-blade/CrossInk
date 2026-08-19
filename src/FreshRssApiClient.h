@@ -82,6 +82,8 @@ class FreshRssJsonParser {
   bool valid = true;
   bool parserError = false;
   bool sinkError = false;
+  bool subscriptionsTruncated = false;
+  bool tagsTruncated = false;
 
   // Opaque to the header so the parser remains independent of the JSON
   // implementation details used by firmware and host tests.
