@@ -7,6 +7,8 @@
 
 ### Fixed
 
+- EPUB chapter selection now keeps only the visible TOC window in memory and fails gracefully if its activity cannot be allocated, preventing intermittent crashes on memory-constrained devices.
+- FreshRSS screens now exit and enter sleep without deadlocking during font restoration, and cached article lists once again honor the configured auto-sleep timeout.
 - Gujarati text on an EPUB's first image page now stays readable through the final image/grayscale refresh, and Gujarati book names render correctly in the book-action popup instead of turning into diamond placeholders.
 - Opening EPUB pages using an SD-card font no longer render as diamond placeholders on their first display: incremental indexing releases its resumable SD handles before rendering, and each font style prewarms only the glyphs it actually draws.
 - Gujarati author names on the Lyra Home card now prewarm their size-matched 10-point fallback font instead of incorrectly warming only the title's 12-point font.

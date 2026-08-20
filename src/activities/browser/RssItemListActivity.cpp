@@ -85,8 +85,10 @@ void RssItemListActivity::onExit() {
   items.clear();
   restoreReaderFont();
 
-  if (WiFi.getMode() != WIFI_MODE_NULL) {
+  const bool hadWifi = WiFi.getMode() != WIFI_MODE_NULL;
+  if (hadWifi) {
     WiFi.disconnect(false);
+    WiFi.mode(WIFI_OFF);
     delay(30);
     silentRestart();
   }
@@ -115,10 +117,9 @@ void RssItemListActivity::restoreReaderFont() {
   SETTINGS.readerFontPointSize = savedFontPointSize;
   strncpy(SETTINGS.sdFontFamilyName, savedSdFontFamilyName, sizeof(SETTINGS.sdFontFamilyName) - 1);
   SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
-  {
-    RenderLock lock(*this);
-    sdFontSystem.ensureLoaded(renderer);
-  }
+  // ActivityManager holds RenderLock while calling onExit(). Taking it again
+  // would deadlock before the parent screen or sleep activity can resume.
+  sdFontSystem.ensureLoaded(renderer);
   listFontSessionActive = false;
 }
 

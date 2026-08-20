@@ -5,6 +5,7 @@
 #include <GujaratiIntegration.h>
 #include <I18n.h>
 
+#include <algorithm>
 #include <optional>
 #include <string>
 
@@ -58,6 +59,10 @@ void EpubReaderChapterSelectionActivity::onExit() {
 }
 
 void EpubReaderChapterSelectionActivity::selectChapter() {
+  if (!epub || selectorIndex < 0 || selectorIndex >= getTotalItems()) {
+    LOG_ERR("ERS", "Invalid chapter selection index %d", selectorIndex);
+    return;
+  }
   const auto tocItem = epub->getTocItem(selectorIndex);
   if (tocItem.spineIndex < 0) {
     ActivityResult result;
@@ -145,33 +150,38 @@ void EpubReaderChapterSelectionActivity::buildChapterScreen(UiApp::ScreenType& s
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
   const int totalItems = getTotalItems();
-  std::vector<std::string> labels(totalItems);
-  std::vector<fui::ListItem> items;
-  items.reserve(totalItems);
-  for (int i = 0; i < totalItems; ++i) {
-    const auto item = epub->getTocItem(i);
-    labels[i] = std::string((item.level - 1) * 2, ' ') + item.title;
-    GujaratiIntegration::shapeLongUiString(labels[i]);
-    fui::ListItem row;
-    row.label = labels[i].c_str();
-    row.actionValue = static_cast<int16_t>(i);
-    items.push_back(row);
-  }
-
   fui::ListProps props;
-  props.items = items.data();
-  props.count = static_cast<uint16_t>(items.size());
-  props.selectedIndex = static_cast<int16_t>(selectorIndex);
-  props.action = ACTION_ROW;
-  props.inputMask = fui::InputTouch;
   props.labelText = screen.theme().bodyText;
   const auto rows = configureUiList(props, screen.theme(), screen.body());
   visibleRows = rows > 0 ? rows : 1;
   topIndex = initialViewportPending ? followListSelection(selectorIndex, 0, visibleRows, totalItems)
                                     : scrollListBy(topIndex, 0, visibleRows, totalItems);
   initialViewportPending = false;
-  props.topIndex = static_cast<uint16_t>(topIndex);
+
+  const size_t availableItems = totalItems > topIndex ? static_cast<size_t>(totalItems - topIndex) : 0;
+  const size_t drawCount = std::min({static_cast<size_t>(visibleRows), CHAPTER_WINDOW_SIZE, availableItems});
+  for (size_t i = 0; i < drawCount; ++i) {
+    const int tocIndex = topIndex + static_cast<int>(i);
+    const auto item = epub->getTocItem(tocIndex);
+    const size_t indent = item.level > 0 ? static_cast<size_t>(item.level - 1) * 2 : 0;
+    labelWindow[i].assign(indent, ' ');
+    labelWindow[i] += item.title;
+    GujaratiIntegration::shapeLongUiString(labelWindow[i]);
+    itemWindow[i] = fui::ListItem{};
+    itemWindow[i].label = labelWindow[i].c_str();
+    itemWindow[i].actionValue = static_cast<int16_t>(tocIndex);
+  }
+
+  props.items = itemWindow.data();
+  props.count = static_cast<uint16_t>(drawCount);
+  props.selectedIndex = static_cast<int16_t>(selectorIndex - topIndex);
+  props.action = ACTION_ROW;
+  props.inputMask = fui::InputTouch;
+  props.topIndex = 0;
   screen.list(props);
+  fui::drawListScrollIndicator(screen.target(), screen.body(), static_cast<size_t>(totalItems), visibleRows, topIndex,
+                               screen.theme().listScrollWidth, screen.theme().listScrollSide,
+                               screen.theme().listScrollInset);
 }
 
 void EpubReaderChapterSelectionActivity::render(RenderLock&&) {
@@ -196,9 +206,16 @@ void EpubReaderChapterSelectionActivity::render(RenderLock&&) {
   if (epub) {
     const int fontId = uiScaleSpec().bodyFontId;
     std::string prewarmText;
-    for (int i = 0; i < epub->getTocItemsCount(); ++i) {
+    const int totalItems = getTotalItems();
+    const int prewarmStart = initialViewportPending
+                                 ? std::max(0, selectorIndex - static_cast<int>(CHAPTER_WINDOW_SIZE) + 1)
+                                 : topIndex;
+    const int prewarmEnd = std::min(totalItems, prewarmStart + static_cast<int>(CHAPTER_WINDOW_SIZE));
+    for (int i = prewarmStart; i < prewarmEnd; ++i) {
       const auto item = epub->getTocItem(i);
-      std::string label = std::string((item.level - 1) * 2, ' ') + item.title;
+      const size_t indent = item.level > 0 ? static_cast<size_t>(item.level - 1) * 2 : 0;
+      std::string label(indent, ' ');
+      label += item.title;
       GujaratiIntegration::shapeLongUiString(label);
       prewarmText += label;
       prewarmText += '\n';

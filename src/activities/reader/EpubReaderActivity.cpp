@@ -3132,29 +3132,38 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       const int spineIdx = currentSpineIndex;
       const std::string path = epub->getPath();
       pauseReadingPaceTimer("chapter_selection");
-      startActivityForResult(
-          std::make_unique<EpubReaderChapterSelectionActivity>(renderer, mappedInput, epub, path, spineIdx),
-          [this](const ActivityResult& result) {
-            if (!result.isCancelled) {
-              const auto& chapterResult = std::get<ChapterResult>(result.data);
-              RenderLock lock(*this);
+      auto chapterSelection =
+          makeUniqueNoThrow<EpubReaderChapterSelectionActivity>(renderer, mappedInput, epub, path, spineIdx);
+      if (!chapterSelection) {
+        LOG_ERR("ERS", "OOM allocating chapter selector (%u bytes)",
+                static_cast<unsigned>(sizeof(EpubReaderChapterSelectionActivity)));
+        resumeReadingPaceTimer("chapter_selection_alloc_failed");
+        drawToast(renderer, tr(STR_MEMORY_ERROR));
+        delay(1000);
+        requestUpdate();
+        break;
+      }
+      startActivityForResult(std::move(chapterSelection), [this](const ActivityResult& result) {
+        if (!result.isCancelled) {
+          const auto& chapterResult = std::get<ChapterResult>(result.data);
+          RenderLock lock(*this);
 
-              clearFootnotePreviewState();
-              currentSpineIndex = chapterResult.spineIndex;
+          clearFootnotePreviewState();
+          currentSpineIndex = chapterResult.spineIndex;
 
-              // If anchor is not empty, it will be used later to calculate the page number.
-              pendingAnchor = chapterResult.anchor;
+          // If anchor is not empty, it will be used later to calculate the page number.
+          pendingAnchor = chapterResult.anchor;
 
-              // Otherwise page 0 will be used.
-              nextPageNumber = 0;
+          // Otherwise page 0 will be used.
+          nextPageNumber = 0;
 
-              section.reset();
-              armReadingPaceWarmup("chapter_jump");
-              pauseReadingPaceTimer("chapter_jump");
-            } else {
-              resumeReadingPaceTimer("chapter_selection_cancel");
-            }
-          });
+          section.reset();
+          armReadingPaceWarmup("chapter_jump");
+          pauseReadingPaceTimer("chapter_jump");
+        } else {
+          resumeReadingPaceTimer("chapter_selection_cancel");
+        }
+      });
       break;
     }
     case EpubReaderMenuActivity::MenuAction::FOOTNOTES: {

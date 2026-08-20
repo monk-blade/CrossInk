@@ -75,7 +75,9 @@ class RssItemListActivity final : public Activity {
   bool ensureFreshPageForIndex(size_t index);
   const CachedRssItem* itemAtVisibleIndex(size_t index) const;
   bool listHasSubtitle() const;
-  bool preventAutoSleep() override { return true; }
+  bool preventAutoSleep() override {
+    return state == ListState::CHECK_WIFI || state == ListState::WIFI_SELECTION || state == ListState::LOADING;
+  }
 
   unsigned long lastSyncPaintMs = 0;
 

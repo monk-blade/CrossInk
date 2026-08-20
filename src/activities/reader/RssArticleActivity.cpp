@@ -508,10 +508,9 @@ void RssArticleActivity::restoreReaderFont() {
   SETTINGS.readerFontPointSize = savedFontPointSize;
   strncpy(SETTINGS.sdFontFamilyName, savedSdFontFamilyName, sizeof(SETTINGS.sdFontFamilyName) - 1);
   SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
-  {
-    RenderLock lock(*this);
-    sdFontSystem.ensureLoaded(renderer);
-  }
+  // ActivityManager holds RenderLock while calling onExit(). Taking it again
+  // would deadlock when returning to the article list or entering sleep.
+  sdFontSystem.ensureLoaded(renderer);
   rssFontSessionActive = false;
 }
 
