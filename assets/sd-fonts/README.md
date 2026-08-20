@@ -20,3 +20,19 @@ RASA=.work/fonts/downloads/Rasa/Rasa[wght].ttf
 ```
 
 `make prepare-simulator-fs` copies these into `fs_/.fonts/` for the SDL simulator.
+
+### LexendDecaHindVadodara500
+
+```sh
+LEX=lib/EpdFont/builtinFonts/source/LexendDeca
+HIND=.work/fonts/downloads/HindVadodara
+
+.venv/bin/python lib/GujaratiShaper/scripts/build_combined_font.py \
+  --latin-regular "$LEX/LexendDeca-Regular.ttf" \
+  --latin-bold "$LEX/LexendDeca-Bold.ttf" \
+  --gujarati-regular "$HIND/HindVadodara-Medium.ttf" \
+  --gujarati-bold "$HIND/HindVadodara-Bold.ttf" \
+  --gujarati-sizes 16:16,18:18 \
+  --name LexendDecaHindVadodara500 \
+  --output-dir ./assets/sd-fonts/LexendDecaHindVadodara500/
+```
