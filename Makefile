@@ -115,6 +115,9 @@ smoke: check-pio
 
 prepare-simulator-fs:
 	@mkdir -p "$(FS_DIR)/.crosspoint" "$(FS_DIR)/.fonts"
+	@if [ -d "$(ROOT)/assets/sd-fonts" ]; then \
+		cp -R "$(ROOT)/assets/sd-fonts/." "$(FS_DIR)/.fonts/"; \
+	fi
 	@if [ ! -f "$(FS_DIR)/.fonts/Rasa/Rasa_16.cpfont" ] && [ -d "$(SIMULATOR_FS_SOURCE)" ]; then \
 		echo "Importing simulator fixture from $(SIMULATOR_FS_SOURCE)"; \
 		cp -R "$(SIMULATOR_FS_SOURCE)/." "$(FS_DIR)/"; \
