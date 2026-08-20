@@ -184,7 +184,12 @@ HttpDownloader::DownloadError runRequestWolf(const std::string& url, const char*
   http.setTimeout(HTTP_TIMEOUT_MS);
   http.setInsecure();
   http.setFollowRedirects(MAX_REDIRECTS);
-  if (!http.begin(url)) return HttpDownloader::HTTP_ERROR;
+  LOG_DBG("FRSS", "%s %s start (free=%u maxAlloc=%u wifi=%d rssi=%d)", method, url.c_str(), ESP.getFreeHeap(),
+          ESP.getMaxAllocHeap(), static_cast<int>(WiFi.status()), WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
+  if (!http.begin(url)) {
+    LOG_ERR("FRSS", "%s %s rejected by HTTP client", method, url.c_str());
+    return HttpDownloader::HTTP_ERROR;
+  }
   http.setUserAgent("CrossInk-ESP32-" CROSSINK_VERSION);
   for (const auto& header : headers) http.addHeader(header.first, header.second);
 
@@ -199,12 +204,16 @@ HttpDownloader::DownloadError runRequestWolf(const std::string& url, const char*
         return true;
       },
       [&sink]() { return isCancelRequested(sink.cancelFlag, sink.shouldCancel); });
+  LOG_DBG("FRSS", "%s %s finished status=%d complete=%d callbackAborted=%d bytes=%zu contentLength=%zu free=%u maxAlloc=%u",
+          method, url.c_str(), status, http.responseComplete(), http.callbackAborted(), sink.downloaded,
+          http.hasContentLength() ? http.getContentLength() : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   if (http.aborted()) {
     LOG_ERR("FRSS", "HTTP request cancelled after %zu/%zu bytes", sink.downloaded, sink.total);
     return HttpDownloader::ABORTED;
   }
   if (status != 200) {
-    LOG_ERR("FRSS", "HTTP request returned status %d after %zu/%zu bytes", status, sink.downloaded, sink.total);
+    LOG_ERR("FRSS", "HTTP %s %s failed: status=%d after %zu/%zu bytes (complete=%d)", method, url.c_str(), status,
+            sink.downloaded, sink.total, http.responseComplete());
     logNetworkState("FreshRSS HTTP status failure");
     return HttpDownloader::HTTP_ERROR;
   }
@@ -213,7 +222,8 @@ HttpDownloader::DownloadError runRequestWolf(const std::string& url, const char*
     return HttpDownloader::FILE_ERROR;
   }
   if (!http.responseComplete()) {
-    LOG_ERR("FRSS", "HTTP response incomplete after %zu/%zu bytes", sink.downloaded, sink.total);
+    LOG_ERR("FRSS", "HTTP %s %s response incomplete after %zu/%zu bytes", method, url.c_str(), sink.downloaded,
+            sink.total);
     logNetworkState("FreshRSS incomplete response");
     return HttpDownloader::HTTP_ERROR;
   }

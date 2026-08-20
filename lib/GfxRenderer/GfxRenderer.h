@@ -186,6 +186,9 @@ class GfxRenderer {
                                             uint16_t capacity, std::string& tokenScratch,
                                             std::string& visualScratch) const;
   bool releaseSdCardFontForLowMemory(int fontId, bool preserveAdvanceTable = false) const;
+  // Release transient glyph caches for every registered SD font while keeping
+  // the loaded font objects and fallback mappings available for the next draw.
+  void releaseAllSdCardFontCachesForLowMemory(bool preserveAdvanceTable = false) const;
 
   // Orientation control (affects logical width/height and coordinate transforms)
   void setOrientation(const Orientation o) { orientation = o; }

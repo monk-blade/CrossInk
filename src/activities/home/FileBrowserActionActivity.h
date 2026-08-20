@@ -38,6 +38,7 @@ class FileBrowserActionActivity final : public Activity {
                             std::vector<MenuItem> items, bool ignoreInitialConfirmRelease = false);
 
   void onEnter() override;
+  void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
 

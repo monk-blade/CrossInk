@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <optional>
 
+#include "components/UiAppHelpers.h"
+
 FileBrowserActionActivity::FileBrowserActionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                      std::string title, std::vector<MenuItem> items,
                                                      const bool ignoreInitialConfirmRelease)
@@ -15,8 +17,19 @@ FileBrowserActionActivity::FileBrowserActionActivity(GfxRenderer& renderer, Mapp
       items(std::move(items)),
       ignoreConfirmRelease(ignoreInitialConfirmRelease) {}
 
+void FileBrowserActionActivity::onExit() {
+  releaseUiSdFontCachesForLowMemory(renderer);
+  Activity::onExit();
+}
+
 void FileBrowserActionActivity::onEnter() {
   Activity::onEnter();
+  // The parent browser remains underneath this popup. Acquire the render lock
+  // before reclaiming its transient SD-font caches.
+  {
+    RenderLock lock(*this);
+    releaseUiSdFontCachesForLowMemory(renderer);
+  }
   // A touch long-press opens this activity while the finger is still down.
   // Wait for that contact to end so its release cannot activate a menu row.
   int touchX = 0;

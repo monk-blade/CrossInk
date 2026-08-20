@@ -19,9 +19,12 @@ JOBS ?= 2
 
 PLATFORMIO_CORE_DIR ?= $(ROOT)/.platformio
 PIO_ENV ?= simulator-X3
+DEVELOPMENT_FIRMWARE_ENVS ?= default sticky
 HOST_TEST_BUILD ?= $(ROOT)/test/build
 FS_DIR ?= $(ROOT)/fs_
-EPUB_DIR ?= $(CROSSPOINT_WRAPPER)/epubs
+# Simulator EPUBs are part of this repository. Keep EPUB_DIR overridable for
+# developers who want to mount a larger private library.
+EPUB_DIR ?= $(ROOT)/epubs
 
 # The existing wrapper contains the public catalog/tooling.  Override these
 # when the repository is moved away from the sibling wrapper checkout.
@@ -54,13 +57,14 @@ FEATURE_TEST_TARGETS := \
 .PHONY: help setup build firmware simulator simulator-x3 simulator-headless \
 	smoke configure-tests host-tests test test-gujarati test-rss \
 	prepare-simulator-fs prepare-epub-fixture prepare-freshrss prepare-settings prepare-fonts generate-fonts \
-	generate-rss-font verify status clean clean-tests check-pio
+	generate-rss-font firmware-development verify status clean clean-tests check-pio
 
 help:
 	@echo "CrossInk Gujarati + FreshRSS targets"
 	@echo "  make setup                 Create .venv and install build dependencies"
 	@echo "  make build                Build the configured PlatformIO environment"
 	@echo "  make firmware             Build the X3/X4 device firmware"
+	@echo "  make firmware-development Build development firmware (default + sticky)"
 	@echo "  make simulator             Build and run the X3 simulator"
 	@echo "  make simulator-headless   Run the simulator with SDL dummy video"
 	@echo "  make smoke                Run the headless EPUB simulator smoke test"
@@ -74,7 +78,7 @@ help:
 	@echo "  make verify               Build, test, and check the worktree"
 	@echo "  make status               Show this repository's Git status"
 	@echo ""
-	@echo "Overrides: PIO_ENV=simulator-X3, JOBS=4, CROSSPOINT_WRAPPER=/path/to/crosspoint"
+	@echo "Overrides: PIO_ENV=simulator-X3, DEVELOPMENT_FIRMWARE_ENVS='default sticky x4-pro', JOBS=4, EPUB_DIR=/path/to/epubs, CROSSPOINT_WRAPPER=/path/to/crosspoint"
 
 setup:
 	@test -x "$(VENV_PYTHON)" || python3 -m venv "$(ROOT)/.venv"
@@ -88,6 +92,13 @@ build: check-pio
 
 firmware: PIO_ENV := default
 firmware: build
+
+firmware-development: check-pio
+	@set -eu; \
+	for env_name in $(DEVELOPMENT_FIRMWARE_ENVS); do \
+		echo "Building development firmware environment: $$env_name"; \
+		cd "$(ROOT)" && PLATFORMIO_CORE_DIR="$(PLATFORMIO_CORE_DIR)" "$(PIO)" run -e "$$env_name"; \
+	done
 
 simulator: PIO_ENV := simulator-X3
 simulator: prepare-simulator-fs prepare-epub-fixture prepare-freshrss prepare-settings build
@@ -116,11 +127,20 @@ prepare-epub-fixture:
 	@echo "Simulator EPUB fixture: $$(readlink "$(FS_DIR)/books")"
 
 prepare-freshrss:
-	@test -f "$(FRESHRSS_TEMPLATE)" || (echo "Redacted FreshRSS template not found: $(FRESHRSS_TEMPLATE)"; exit 1)
 	@mkdir -p "$$(dirname "$(FRESHRSS_FILE)")"
-	@if [ ! -f "$(FRESHRSS_FILE)" ]; then cp "$(FRESHRSS_TEMPLATE)" "$(FRESHRSS_FILE)"; fi
-	@echo "FreshRSS configuration: $(FRESHRSS_FILE)"
-	@echo "Edit that ignored file before using Refresh; no credentials are stored in Git."
+	@if [ ! -f "$(FRESHRSS_FILE)" ]; then \
+		if [ -f "$(FRESHRSS_TEMPLATE)" ]; then \
+			cp "$(FRESHRSS_TEMPLATE)" "$(FRESHRSS_FILE)"; \
+		else \
+			echo "FreshRSS template not found; simulator will start without an account."; \
+		fi; \
+	fi
+	@if [ -f "$(FRESHRSS_FILE)" ]; then \
+		echo "FreshRSS configuration: $(FRESHRSS_FILE)"; \
+		echo "Edit that ignored file before using Refresh; no credentials are stored in Git."; \
+	else \
+		echo "Configure FreshRSS in the simulator's Settings screen if needed."; \
+	fi
 
 prepare-settings:
 	@mkdir -p "$(FS_DIR)/.crosspoint"

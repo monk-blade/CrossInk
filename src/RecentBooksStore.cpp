@@ -16,6 +16,11 @@ namespace {
 constexpr uint8_t RECENT_BOOKS_FILE_VERSION = 3;
 constexpr char RECENT_BOOKS_FILE_BIN[] = "/.crosspoint/recent.bin";
 constexpr char RECENT_BOOKS_FILE_BAK[] = "/.crosspoint/recent.bin.bak";
+
+void shapeRecentBookText(RecentBook& book) {
+  GujaratiIntegration::shapeLongUiString(book.title);
+  GujaratiIntegration::shapeLongUiString(book.author);
+}
 }  // namespace
 
 void RecentBooksStore::toJson(JsonDocument& doc) const {
@@ -224,10 +229,13 @@ bool RecentBooksStore::loadFromBinaryFile() {
         std::string title, author;
         serialization::readString(inputFile, title);
         serialization::readString(inputFile, author);
-        recentBooks.push_back({path, title, author, ""});
-      } else {
-        recentBooks.push_back(book);
+        book = {path, std::move(title), std::move(author), ""};
       }
+      // recent.bin predates the JSON-load shaping hook. Shape both metadata
+      // sources before the migration writes them to recent.json; otherwise
+      // Home and Recent Books render pre-base Gujarati matras in logical order.
+      shapeRecentBookText(book);
+      recentBooks.push_back(std::move(book));
     }
   } else if (version == RECENT_BOOKS_FILE_VERSION) {
     uint8_t count;
@@ -250,7 +258,9 @@ bool RecentBooksStore::loadFromBinaryFile() {
         continue;
       }
 
-      recentBooks.push_back({path, title, author, coverBmpPath});
+      RecentBook book{path, std::move(title), std::move(author), std::move(coverBmpPath)};
+      shapeRecentBookText(book);
+      recentBooks.push_back(std::move(book));
     }
 
     if (omitted > 0) {

@@ -393,6 +393,7 @@ std::string FreshRssApiClient::endpoint(const std::string& path) const {
 bool FreshRssApiClient::login(std::string& auth, std::string& error, const CancelCallback& shouldCancel) {
   std::string response;
   const std::string form = "Email=" + formEncode(account.username) + "&Passwd=" + formEncode(account.password);
+  LOG_DBG("FRSS", "POST accounts/ClientLogin");
   if (!HttpDownloader::postForm(endpoint("accounts/ClientLogin"), form,
                                  [&response](const uint8_t* data, size_t len) {
                                    if (response.size() + len > 2048) return false;
@@ -425,6 +426,7 @@ bool FreshRssApiClient::login(std::string& auth, std::string& error, const Cance
 bool FreshRssApiClient::getJson(const std::string& path, const FreshRssJsonParser::Document /*document*/,
                                 FreshRssJsonParser& parser, const std::string& auth, std::string& error,
                                 bool* requestCompleted, const CancelCallback& shouldCancel) {
+  LOG_DBG("FRSS", "GET %s", path.c_str());
   const std::vector<HttpDownloader::Header> headers = {{"Authorization", "GoogleLogin auth=" + auth},
                                                         {"Accept", "application/json"}};
   const bool fetched = HttpDownloader::fetchUrlWithHeaders(
@@ -438,9 +440,11 @@ bool FreshRssApiClient::getJson(const std::string& path, const FreshRssJsonParse
   if (requestCompleted) *requestCompleted = fetched;
   if (!fetched || !parser.finish()) {
     error = fetched ? "FreshRSS response could not be parsed" : "FreshRSS request failed";
-    LOG_ERR("FRSS", "getJson failed for %s: %s", path.c_str(), error.c_str());
+    LOG_ERR("FRSS", "GET %s failed: transport=%d parser=%d sink=%d: %s", path.c_str(), fetched,
+            parser.ok(), parser.sinkFailed(), error.c_str());
     return false;
   }
+  LOG_DBG("FRSS", "GET %s parsed successfully", path.c_str());
   return true;
 }
 

@@ -38,6 +38,12 @@ int EpubReaderChapterSelectionActivity::getTotalItems() const { return epub->get
 
 void EpubReaderChapterSelectionActivity::onEnter() {
   Activity::onEnter();
+  // The reader remains on the activity stack while this selector is shown.
+  // Acquire the render lock because this also mutates SD-font cache state.
+  {
+    RenderLock lock(*this);
+    releaseUiSdFontCachesForLowMemory(renderer);
+  }
   mappedInput.setReaderTouchscreenOverride(true);
   if (!epub) return;
 
@@ -55,6 +61,7 @@ void EpubReaderChapterSelectionActivity::onEnter() {
 
 void EpubReaderChapterSelectionActivity::onExit() {
   mappedInput.setReaderTouchscreenOverride(false);
+  releaseUiSdFontCachesForLowMemory(renderer);
   Activity::onExit();
 }
 

@@ -1,7 +1,14 @@
 ## [Unreleased]
 
+### Fixed
+
+- Release transient Gujarati SD-font glyph caches when chapter and book-option screens are entered or exited, preventing selection crashes caused by low contiguous heap.
+- Shape Gujarati titles and authors while migrating legacy recent-book records, so pre-base matras such as those in `લલિત` and `વિવિધ` render correctly on Home and Recent Books.
+- FreshRSS device requests now preserve the configured network timeout and log the failing request phase, HTTP status, and response completeness for serial diagnosis.
+
 ### Added
 
+- Added an opt-in `make firmware-development` target for building the development firmware environments together.
 - Gujarati text rendering: EPUB books and UI labels containing Gujarati now shape conjuncts, half-forms, reph, and pre-base matras correctly instead of rendering isolated base glyphs.
 - FreshRSS reader: browse subscriptions and categories, sync articles for offline reading, and read, star, and queue articles from a FreshRSS server, all without any network access from the article reader itself.
 
@@ -9,6 +16,7 @@
 
 - EPUB chapter selection now keeps only the visible TOC window in memory and fails gracefully if its activity cannot be allocated, preventing intermittent crashes on memory-constrained devices.
 - FreshRSS screens now exit and enter sleep without deadlocking during font restoration, and cached article lists once again honor the configured auto-sleep timeout.
+- `make simulator` now uses the repository's tracked EPUB fixtures and starts without FreshRSS credentials when the optional sibling developer checkout is absent.
 - Gujarati text on an EPUB's first image page now stays readable through the final image/grayscale refresh, and Gujarati book names render correctly in the book-action popup instead of turning into diamond placeholders.
 - Opening EPUB pages using an SD-card font no longer render as diamond placeholders on their first display: incremental indexing releases its resumable SD handles before rendering, and each font style prewarms only the glyphs it actually draws.
 - Gujarati author names on the Lyra Home card now prewarm their size-matched 10-point fallback font instead of incorrectly warming only the title's 12-point font.

@@ -481,6 +481,12 @@ void EpubReaderMenuActivity::drawIconTabBar(const Rect rect, const bool drawBott
 
 void EpubReaderMenuActivity::onEnter() {
   Activity::onEnter();
+  // The reader remains underneath this menu. Acquire the render lock because
+  // releasing its SD-font caches mutates renderer-owned font state.
+  {
+    RenderLock lock(*this);
+    releaseUiSdFontCachesForLowMemory(renderer);
+  }
   mappedInput.setReaderTouchscreenOverride(true);
   uiReady = false;
   visibleRows = 1;
@@ -493,6 +499,7 @@ void EpubReaderMenuActivity::onEnter() {
 
 void EpubReaderMenuActivity::onExit() {
   mappedInput.setReaderTouchscreenOverride(false);
+  releaseUiSdFontCachesForLowMemory(renderer);
   Activity::onExit();
 }
 

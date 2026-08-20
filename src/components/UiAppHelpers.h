@@ -28,6 +28,15 @@ inline freeink::ui::GfxRendererTarget makeUiTarget(const GfxRenderer& renderer) 
   return target;
 }
 
+// Gujarati UI fallback fonts can have several size-matched SD fonts registered
+// at once. Their glyph caches are intentionally retained by ordinary cache
+// cleanup, but transient child activities must release them before handing
+// control back to a reader or file browser so the next allocation has a
+// contiguous internal-RAM block available.
+inline void releaseUiSdFontCachesForLowMemory(const GfxRenderer& renderer) {
+  renderer.releaseAllSdCardFontCachesForLowMemory(false);
+}
+
 // Tap release with coords, plus the raw release the tap classifier never
 // reports (swipe end, drag-off) delivered off-target: nothing dispatches,
 // but routing drops its pressed-element state instead of ghosting it onto

@@ -229,6 +229,12 @@ bool GfxRenderer::releaseSdCardFontForLowMemory(int fontId, const bool preserveA
   return true;
 }
 
+void GfxRenderer::releaseAllSdCardFontCachesForLowMemory(const bool preserveAdvanceTable) const {
+  for (const auto& entry : sdCardFonts_) {
+    if (entry.second != nullptr) entry.second->releaseForLowMemory(preserveAdvanceTable);
+  }
+}
+
 void GfxRenderer::begin() {
   frameBuffer = display.getFrameBuffer();
   if (!frameBuffer) {

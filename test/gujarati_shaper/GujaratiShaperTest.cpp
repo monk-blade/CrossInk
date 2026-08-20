@@ -244,6 +244,13 @@ TEST(GujaratiShaper, CorpusMitra) {
   EXPECT_EQ(cps[0], 0x0ABFu);
 }
 
+TEST(GujaratiShaper, CorpusUiTitlesKeepPreBaseIMatrasWithTheirConsonants) {
+  EXPECT_EQ(decodeCps(shapeStr("લલિત")),
+            (std::vector<uint32_t>{0x0AB2, 0x0ABF, 0x0AB2, 0x0AA4}));
+  EXPECT_EQ(decodeCps(shapeStr("વિવિધ")),
+            (std::vector<uint32_t>{0x0ABF, 0x0AB5, 0x0ABF, 0x0AB5, 0x0AA7}));
+}
+
 TEST(GujaratiShaper, CorpusMaam) {
   const auto cps = decodeCps(shapeStr("માં"));
   ASSERT_EQ(cps.size(), 3u);
