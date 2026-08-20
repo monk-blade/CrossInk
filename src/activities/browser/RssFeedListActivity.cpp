@@ -4,6 +4,7 @@
 #include <FontCacheManager.h>
 #include <GujaratiIntegration.h>
 #include <I18n.h>
+#include <Logging.h>
 #include <WiFi.h>
 
 #include <algorithm>
@@ -265,9 +266,29 @@ void RssFeedListActivity::performSync() {
       syncProgress,
       [this](const char* message) { statusMessage = message; },
       [this](const bool force) { paintSyncProgress(force); }};
+
+  const uint32_t freeBeforeFontRelease = ESP.getFreeHeap();
+  const uint32_t maxAllocBeforeFontRelease = ESP.getMaxAllocHeap();
+  {
+    RenderLock lock(*this);
+    // The Gujarati/list SD family includes multiple UI fallback sizes and
+    // glyph caches. They are not needed by the HTTP parser and can leave too
+    // little contiguous internal RAM for the larger response records that
+    // follow FreshRSS's tiny ClientLogin response on C3 devices.
+    sdFontSystem.releaseForNetwork(renderer);
+  }
+  LOG_INF("FRSS", "Sync memory prepared: free %u->%u maxAlloc %u->%u", freeBeforeFontRelease,
+          ESP.getFreeHeap(), maxAllocBeforeFontRelease, ESP.getMaxAllocHeap());
+
   std::string error;
   const bool committed = ::runFreshRssSync(host, error);
   disconnectWifi();
+  {
+    // runFreshRssSync has destroyed its HTTP/TLS clients, so it is safe to
+    // restore the selected list family before painting success or failure.
+    RenderLock lock(*this);
+    sdFontSystem.ensureLoaded(renderer);
+  }
   if (!committed) {
     syncState = FreshRssCache::exists() ? SyncState::IDLE : SyncState::ERROR;
     if (syncState == SyncState::ERROR) {

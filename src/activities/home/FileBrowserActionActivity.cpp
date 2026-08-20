@@ -1,8 +1,11 @@
 #include "FileBrowserActionActivity.h"
 
+#include <FontCacheManager.h>
+#include <GujaratiIntegration.h>
 #include <I18n.h>
 
 #include <algorithm>
+#include <optional>
 
 FileBrowserActionActivity::FileBrowserActionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                      std::string title, std::vector<MenuItem> items,
@@ -22,6 +25,7 @@ void FileBrowserActionActivity::onEnter() {
   optionLabels.resize(items.size());
   std::transform(items.begin(), items.end(), optionLabels.begin(),
                  [](const MenuItem& item) { return std::string(I18N.get(item.labelId)); });
+  GujaratiIntegration::shapeLongUiString(title);
   optionPopup.show(title.c_str(), optionLabels, 0, [this](const int index) {
     if (index < 0 || index >= static_cast<int>(items.size())) return;
     selectionMade = true;
@@ -58,4 +62,17 @@ void FileBrowserActionActivity::loop() {
   if (!optionPopup.isActive() && !selectionMade) finishCancelled();
 }
 
-void FileBrowserActionActivity::render(RenderLock&&) { optionPopup.processRender(renderer, mappedInput); }
+void FileBrowserActionActivity::render(RenderLock&&) {
+  // Book/file titles can contain scripts supplied by the active SD font. Shape
+  // and batch-load the popup's bold title before the real draw; the small
+  // on-demand overflow cache cannot hold a full Gujarati title reliably.
+  std::optional<FontCacheManager::PrewarmScope> titlePrewarm;
+  if (GujaratiIntegration::containsGujarati(title)) {
+    if (auto* fcm = renderer.getFontCacheManager(); fcm != nullptr) {
+      titlePrewarm.emplace(fcm->createPrewarmScope());
+      renderer.drawText(UI_12_FONT_ID, 0, 0, title.c_str(), true, EpdFontFamily::BOLD);
+      titlePrewarm->endScanAndPrewarm();
+    }
+  }
+  optionPopup.processRender(renderer, mappedInput);
+}

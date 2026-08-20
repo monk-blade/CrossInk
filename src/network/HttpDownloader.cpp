@@ -199,10 +199,25 @@ HttpDownloader::DownloadError runRequestWolf(const std::string& url, const char*
         return true;
       },
       [&sink]() { return isCancelRequested(sink.cancelFlag, sink.shouldCancel); });
-  if (http.aborted()) return HttpDownloader::ABORTED;
-  if (status != 200) return HttpDownloader::HTTP_ERROR;
-  if (http.callbackAborted()) return HttpDownloader::FILE_ERROR;
-  return http.responseComplete() ? HttpDownloader::OK : HttpDownloader::HTTP_ERROR;
+  if (http.aborted()) {
+    LOG_ERR("FRSS", "HTTP request cancelled after %zu/%zu bytes", sink.downloaded, sink.total);
+    return HttpDownloader::ABORTED;
+  }
+  if (status != 200) {
+    LOG_ERR("FRSS", "HTTP request returned status %d after %zu/%zu bytes", status, sink.downloaded, sink.total);
+    logNetworkState("FreshRSS HTTP status failure");
+    return HttpDownloader::HTTP_ERROR;
+  }
+  if (http.callbackAborted()) {
+    LOG_ERR("FRSS", "HTTP response sink failed after %zu/%zu bytes", sink.downloaded, sink.total);
+    return HttpDownloader::FILE_ERROR;
+  }
+  if (!http.responseComplete()) {
+    LOG_ERR("FRSS", "HTTP response incomplete after %zu/%zu bytes", sink.downloaded, sink.total);
+    logNetworkState("FreshRSS incomplete response");
+    return HttpDownloader::HTTP_ERROR;
+  }
+  return HttpDownloader::OK;
 }
 #endif
 

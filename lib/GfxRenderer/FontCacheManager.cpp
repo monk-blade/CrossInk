@@ -99,9 +99,12 @@ void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::S
 
 FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager, const PreparationPolicy policy)
     : manager_(&manager), policy_(policy) {
+  const bool outermost = manager_->activePrewarmScopes_++ == 0;
   manager_->scanMode_ = ScanMode::Scanning;
-  manager_->clearCache();
-  manager_->resetStats();
+  if (outermost) {
+    manager_->clearCache();
+    manager_->resetStats();
+  }
   for (auto& bucket : manager_->scanBuckets_) bucket.text.clear();
   manager_->scanBucketCount_ = 0;
   manager_->scanOverflow_ = false;
@@ -130,7 +133,14 @@ bool FontCacheManager::PrewarmScope::endScanAndPrewarm() {
 FontCacheManager::PrewarmScope::~PrewarmScope() {
   if (active_) {
     endScanAndPrewarm();  // no-op if already called (scanText_ is empty)
-    manager_->clearCache();
+    if (manager_->activePrewarmScopes_ == 0) {
+      LOG_ERR("FCM", "Prewarm scope depth underflow");
+      return;
+    }
+    manager_->activePrewarmScopes_--;
+    if (manager_->activePrewarmScopes_ == 0) {
+      manager_->clearCache();
+    }
   }
 }
 

@@ -315,9 +315,27 @@ void RssItemListActivity::fetchFeed() {
   FreshRssSyncHost host{syncProgress,
                         [this](const char* message) { statusMessage = message; },
                         [this](const bool force) { paintSyncProgress(force); }};
+
+  const uint32_t freeBeforeFontRelease = ESP.getFreeHeap();
+  const uint32_t maxAllocBeforeFontRelease = ESP.getMaxAllocHeap();
+  {
+    RenderLock lock(*this);
+    // Return the active SD list font, its UI fallback sizes, and glyph caches
+    // before wolfSSL allocates its record buffers. The font selection remains
+    // in SETTINGS and is restored after the network clients are destroyed.
+    sdFontSystem.releaseForNetwork(renderer);
+  }
+  LOG_INF("FRSS", "Refresh memory prepared: free %u->%u maxAlloc %u->%u", freeBeforeFontRelease,
+          ESP.getFreeHeap(), maxAllocBeforeFontRelease, ESP.getMaxAllocHeap());
+
   std::string error;
-  if (!runFreshRssSync(host, error)) {
-    disconnectWifi();
+  const bool synced = runFreshRssSync(host, error);
+  disconnectWifi();
+  {
+    RenderLock lock(*this);
+    sdFontSystem.ensureLoaded(renderer);
+  }
+  if (!synced) {
     const bool hasCache = FreshRssCache::exists();
     state = hasCache ? ListState::BROWSING : ListState::ERROR;
     if (hasCache) cacheState = tr(STR_FRESHRSS_CACHE_STATE_REFRESH_FAILED);

@@ -66,6 +66,11 @@ class FontCacheManager {
 
   enum class ScanMode : uint8_t { None, Scanning };
   ScanMode scanMode_ = ScanMode::None;
+  // Render helpers can prewarm UI text while a page-level scope is still
+  // alive (for example the EPUB status bar). Only the outermost scope owns
+  // global cache cleanup; otherwise the nested UI scope would evict the page
+  // glyphs before image/grayscale redraw passes consume them.
+  uint8_t activePrewarmScopes_ = 0;
   // A page normally uses one reader font with up to four styles. UI cards can
   // instead use separate size-matched SD fallback fonts for title, author, and
   // stats. Keep those font/style inputs distinct so each file is prewarmed with

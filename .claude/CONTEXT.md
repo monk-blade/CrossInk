@@ -20,6 +20,7 @@ Refer to https://freeink.org/llms.txt for guidance.
 ## Real Hardware / Storage
 
 - SdFat on hardware allows only one open reader per file path at a time. If a fallback needs to reopen the same file, close the first handle before reopening.
+- Before wolfSSL work on ESP32-C3, release active SD fonts with `sdFontSystem.releaseForNetwork(renderer)` and reload only after the TLS clients are destroyed; UI fallback sizes and glyph caches can otherwise starve TLS record allocations.
 
 ## Rendering / Reader Pipeline
 
