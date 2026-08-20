@@ -18,6 +18,7 @@
 #include "activities/browser/RssItemListActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
+#include "network/HttpDownloader.h"
 #include "fontIds.h"
 
 namespace {
@@ -276,11 +277,13 @@ void RssFeedListActivity::performSync() {
     // follow FreshRSS's tiny ClientLogin response on C3 devices.
     sdFontSystem.releaseForNetwork(renderer);
   }
+  HttpDownloader::beginFreshRssSession();
   LOG_INF("FRSS", "Sync memory prepared: free %u->%u maxAlloc %u->%u", freeBeforeFontRelease,
           ESP.getFreeHeap(), maxAllocBeforeFontRelease, ESP.getMaxAllocHeap());
 
   std::string error;
   const bool committed = ::runFreshRssSync(host, error);
+  HttpDownloader::endFreshRssSession();
   disconnectWifi();
   {
     // runFreshRssSync has destroyed its HTTP/TLS clients, so it is safe to

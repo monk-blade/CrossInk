@@ -7,6 +7,8 @@
 #include <string_view>
 #include <unordered_map>
 
+constexpr size_t ZIP_ITEM_NAME_CAPACITY = 512;  // UTF-8 Gujarati EPUB paths can exceed 255 bytes
+
 enum class ZipStreamStatus {
   More,
   Done,
@@ -161,7 +163,7 @@ class ZipFile {
     file.seek(zipDetails.centralDirOffset);
 
     uint32_t sig;
-    char itemName[256];
+    char itemName[ZIP_ITEM_NAME_CAPACITY];
 
     while (file.available()) {
       file.read(&sig, 4);

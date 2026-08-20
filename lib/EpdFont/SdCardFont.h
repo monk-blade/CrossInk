@@ -21,7 +21,7 @@
 
 class SdCardFont {
  public:
-  static constexpr uint16_t MAX_PAGE_GLYPHS = 512;
+  static constexpr uint16_t MAX_PAGE_GLYPHS = 768;
   static constexpr uint8_t MAX_STYLES = 4;
 
   SdCardFont() = default;
@@ -252,7 +252,10 @@ class SdCardFont {
   OverflowContext overflowCtx_[MAX_STYLES] = {};
 
   // Shared on-demand overflow buffer (ring buffer of glyphs loaded via glyphMissHandler)
-  static constexpr uint32_t OVERFLOW_CAPACITY = 8;
+  // Hybrid Latin+Gujarati pages can miss the mini-cache for later Latin runs;
+  // eight slots evicted themselves mid-line. Slot structs live on this
+  // heap-allocated font; bitmaps are allocated on demand.
+  static constexpr uint32_t OVERFLOW_CAPACITY = 32;
   struct OverflowEntry {
     EpdGlyph glyph;
     uint8_t* bitmap = nullptr;

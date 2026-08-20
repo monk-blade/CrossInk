@@ -14,7 +14,8 @@ Pipeline (wraps the two existing scripts):
   2. fontconvert_sdcard.py   -> merge Latin (primary) + baked Gujarati (fallback,
                                 incl. the Gujarati block + PUA range) into .cpfont.
 
-Requires: fontTools, uharfbuzz, freetype-py  (pip install fonttools uharfbuzz freetype-py)
+Requires: fontTools, uharfbuzz, freetype-py
+  (`python3 -m pip install fonttools uharfbuzz freetype-py`, or `make setup`)
 
 Example (Rasa is a variable font; Hind Vadodara ships static weights):
   python3 lib/GujaratiShaper/scripts/build_combined_font.py \
@@ -22,6 +23,14 @@ Example (Rasa is a variable font; Hind Vadodara ships static weights):
       --gujarati-regular "Rasa[wght].ttf" --gujarati-regular-weight 400 \
       --gujarati-bold    "Rasa[wght].ttf" --gujarati-bold-weight 700 \
       --name LexendDecaRasa --output-dir ./fs_/.fonts/LexendDecaRasa/
+
+  # Larger Gujarati at reading sizes (Latin stays at the nominal 16/18pt labels):
+  python3 lib/GujaratiShaper/scripts/build_combined_font.py \
+      --latin-regular LexendDeca-Regular.ttf --latin-bold LexendDeca-Bold.ttf \
+      --gujarati-regular "Rasa[wght].ttf" --gujarati-regular-weight 500 \
+      --gujarati-bold    "Rasa[wght].ttf" --gujarati-bold-weight 700 \
+      --gujarati-sizes 16:18,18:20 \
+      --name LexendDecaRasa500 --output-dir ./fs_/.fonts/LexendDecaRasa500/
 
   python3 lib/GujaratiShaper/scripts/build_combined_font.py \
       --latin-regular LexendDeca-Regular.ttf --latin-bold LexendDeca-Bold.ttf \
@@ -43,7 +52,7 @@ DEFAULT_PUA = os.path.join(HERE, "pua_mapping.json")
 FONTCONVERT = os.path.join(REPO, "lib", "EpdFont", "scripts", "fontconvert_sdcard.py")
 # Gujarati block + shaped-conjunct PUA range + Indic danda + Indian rupee sign.
 GUJARATI_FALLBACK_RANGES = "0x0A80-0x0AFF;0xE000-0xE07C;0x0964-0x0965;0x20B9-0x20B9"
-OUTPUT_INTERVALS = "latin-ext,gujarati,(0x0964-0x0965),(0x20B9-0x20B9)"
+OUTPUT_INTERVALS = "builtin,gujarati,(0x0964-0x0965),(0x20B9-0x20B9)"
 
 
 def main() -> int:
@@ -60,6 +69,13 @@ def main() -> int:
     # 8-12pt, so omitting the small sizes makes the closest (12pt) glyphs too
     # tall for the status bar and clips chapter/title text.
     ap.add_argument("--sizes", default="8,10,12,14,16,18")
+    ap.add_argument(
+        "--gujarati-sizes",
+        default=None,
+        help="Optional per-output Gujarati raster sizes as OUTPUT:RASTER pairs "
+             "(e.g. '16:18,18:20' keeps Latin at 16/18pt but rasterizes Gujarati "
+             "larger in those .cpfont files).",
+    )
     ap.add_argument("--output-dir", required=True)
     ap.add_argument("--pua-mapping", default=DEFAULT_PUA)
     args = ap.parse_args()
@@ -93,6 +109,8 @@ def main() -> int:
             "--sizes", args.sizes, "--name", args.name,
             "--pua-mapping", reg_map, "--output-dir", args.output_dir,
         ]
+        if args.gujarati_sizes:
+            cmd += ["--fallback-sizes", args.gujarati_sizes]
         subprocess.run(cmd, check=True)
     print(f"Built combined family '{args.name}' -> {args.output_dir}")
     return 0

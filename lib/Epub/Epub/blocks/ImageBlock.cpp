@@ -3,6 +3,7 @@
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
 #include <Serialization.h>
 
 #include <cstdlib>
@@ -263,16 +264,21 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
   // The font-prewarm scan pass only accumulates glyphs; an image contributes
   // none, and its DirectPixelWriter output bypasses the renderer's scan-mode
   // suppression, so it would otherwise do a full (discarded) cache render every
-  // page view. Skip it here. The image still draws in the real BW/grayscale
-  // passes; on first view this just moves the one-time decode to the BW pass.
+  // page view. Skip it here. The image still draws in the real BW pass.
   FontCacheManager* fcm = renderer.getFontCacheManager();
   if (fcm && fcm->isScanning()) return;
+
+  // Grayscale planes are text anti-aliasing only. Re-decoding images there can
+  // OOM on C3 and mark a successful BW blit as a session failure (empty box).
+  if (renderer.getRenderMode() != GfxRenderer::BW) {
+    return;
+  }
 
   const int screenWidth = renderer.getScreenWidth();
   const int screenHeight = renderer.getScreenHeight();
 
   if (width <= 0 || height <= 0) {
-    LOG_ERR("IMG", "Invalid image size: %dx%d", width, height);
+    LOG_ERR("IMG", "Invalid image size: %dx%d path=%s src=%s", width, height, imagePath.c_str(), sourcePath.c_str());
     return;
   }
 
@@ -295,28 +301,27 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
     return;
   }
 
+  std::string cachePath = getCachePath(imagePath);
+  if (renderFromCache(renderer, cachePath, x, y, width, height)) {
+    return;
+  }
+
   if (imageFailedThisSession(imagePath)) {
+    LOG_ERR("IMG", "Skipping image previously failed this session: %s src=%s", imagePath.c_str(), sourcePath.c_str());
     renderPlaceholder(renderer, x, y, foregroundBlack);
     return;
   }
 
-  // Try to render from cache first
-  std::string cachePath = getCachePath(imagePath);
-  if (renderFromCache(renderer, cachePath, x, y, width, height)) {
-    return;  // Successfully rendered from cache
-  }
-
   if (!sourcePath.empty() && extractFn && !Storage.exists(imagePath.c_str())) {
     if (!extractFn(extractContext, sourcePath.c_str(), imagePath.c_str())) {
-      LOG_ERR("IMG", "Lazy extraction failed: %s", sourcePath.c_str());
+      LOG_ERR("IMG", "Lazy extraction failed: %s -> %s (free=%u maxAlloc=%u)", sourcePath.c_str(), imagePath.c_str(),
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     }
   }
 
-  // No cache - need to decode the image
-  // Check if image file exists
   FsFile file;
   if (!Storage.openFileForRead("IMG", imagePath, file)) {
-    LOG_ERR("IMG", "Image file not found: %s", imagePath.c_str());
+    LOG_ERR("IMG", "Image file not found: %s src=%s", imagePath.c_str(), sourcePath.c_str());
     rememberImageFailure(imagePath);
     renderPlaceholder(renderer, x, y, foregroundBlack);
     return;
@@ -325,10 +330,18 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
   file.close();
 
   if (fileSize == 0) {
-    LOG_ERR("IMG", "Image file is empty: %s", imagePath.c_str());
+    LOG_ERR("IMG", "Image file is empty: %s src=%s", imagePath.c_str(), sourcePath.c_str());
     rememberImageFailure(imagePath);
     renderPlaceholder(renderer, x, y, foregroundBlack);
     return;
+  }
+
+  const auto heapBefore = MemoryBudget::snapshot();
+  if (MemoryBudget::shouldReleaseSdFontCachesForEpubInlineImage(heapBefore)) {
+    renderer.releaseAllSdCardFontCachesForLowMemory(true);
+    const auto heapAfter = MemoryBudget::snapshot();
+    LOG_INF("IMG", "Released SD font caches before decode: free=%u->%u maxAlloc=%u->%u path=%s", heapBefore.freeHeap,
+            heapAfter.freeHeap, heapBefore.maxAllocHeap, heapAfter.maxAllocHeap, imagePath.c_str());
   }
 
   RenderConfig config;
@@ -346,7 +359,7 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
 
   ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(imagePath);
   if (!decoder) {
-    LOG_ERR("IMG", "No decoder found for image: %s", imagePath.c_str());
+    LOG_ERR("IMG", "No decoder found for image: %s src=%s", imagePath.c_str(), sourcePath.c_str());
     rememberImageFailure(imagePath);
     renderPlaceholder(renderer, x, y, foregroundBlack);
     return;
@@ -354,7 +367,24 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y, const b
 
   bool success = decoder->decodeToFramebuffer(imagePath, renderer, config);
   if (!success) {
-    LOG_ERR("IMG", "Failed to decode image: %s", imagePath.c_str());
+    renderer.releaseAllSdCardFontCachesForLowMemory(true);
+    const auto heapRetry = MemoryBudget::snapshot();
+    LOG_ERR("IMG", "Decode failed, retrying after font-cache release (free=%u maxAlloc=%u): %s src=%s",
+            heapRetry.freeHeap, heapRetry.maxAllocHeap, imagePath.c_str(), sourcePath.c_str());
+    success = decoder->decodeToFramebuffer(imagePath, renderer, config);
+  }
+  if (!success) {
+    const auto heap = MemoryBudget::snapshot();
+    LOG_ERR("IMG", "Failed to decode image: %s src=%s size=%zu (free=%u maxAlloc=%u)", imagePath.c_str(),
+            sourcePath.c_str(), fileSize, heap.freeHeap, heap.maxAllocHeap);
+    const bool jpeg = MemoryBudget::isJpegSource(imagePath.c_str());
+    const uint32_t decoderApprox =
+        jpeg ? MemoryBudget::JPEG_DECODER_APPROX_BYTES : MemoryBudget::PNG_DECODER_APPROX_BYTES;
+    if (!MemoryBudget::hasHeapForImageDecoder("IMG", jpeg ? "JPEG" : "PNG", decoderApprox)) {
+      // Transient C3 heap: leave a placeholder this visit, but retry next time.
+      renderPlaceholder(renderer, x, y, foregroundBlack);
+      return;
+    }
     rememberImageFailure(imagePath);
     renderPlaceholder(renderer, x, y, foregroundBlack);
     return;

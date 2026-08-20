@@ -8,6 +8,7 @@
 
 ### Added
 
+- Combined Latin + Gujarati SD fonts can rasterize Gujarati glyphs larger than the Latin body at specific reading sizes via `--gujarati-sizes` in `build_combined_font.py` (for example `16:18,18:20` for LexendDecaRasa500).
 - Added an opt-in `make firmware-development` target for building the development firmware environments together.
 - Gujarati text rendering: EPUB books and UI labels containing Gujarati now shape conjuncts, half-forms, reph, and pre-base matras correctly instead of rendering isolated base glyphs.
 - FreshRSS reader: browse subscriptions and categories, sync articles for offline reading, and read, star, and queue articles from a FreshRSS server, all without any network access from the article reader itself.
@@ -15,6 +16,13 @@
 ### Fixed
 
 - EPUB chapter selection now keeps only the visible TOC window in memory and fails gracefully if its activity cannot be allocated, preventing intermittent crashes on memory-constrained devices.
+- Hybrid SD-card fonts (such as LexendDecaHindVadodara) no longer draw diamond placeholders for Latin letters that are in the font file but were not prewarmed, or that the hybrid file omitted; those glyphs load on demand or fall back to the built-in reader font.
+- Large EPUB chapters on X3 now keep already-laid-out pages when heap runs low instead of aborting the whole chapter with only the Home-screen memory alert.
+- FreshRSS sync reuses one TLS HTTP client across login and API reads, and asks servers not to compress JSON, so later requests are less likely to fail on ESP32-C3 after ClientLogin succeeds.
+- FreshRSS sync now releases built-in font decompressor caches before TLS, retries failed HTTPS requests up to three times, and drops the wolfSSL session after every API call so ESP32-C3 handshakes see a larger contiguous heap block.
+- FreshRSS sync no longer aborts when the tag list cannot be downloaded; articles and subscriptions still sync, and category labels fall back to tag ids when labels are missing.
+- FreshRSS article downloads on ESP32-C3 now fetch five items per HTTPS page and convert HTML only after each page finishes, so Gujarati shaping no longer stalls the TLS read loop and causes mid-response timeouts.
+- EPUB PNG and JPEG images that reserved a frame now decode on the black-and-white pass after releasing SD-font glyph caches; a failed grayscale/OOM retry no longer leaves an empty bordered box for the rest of the session. Clear `.crosspoint/epub_<hash>/` (especially `img_*`) after flashing if a book still shows a blank image slot.
 - FreshRSS screens now exit and enter sleep without deadlocking during font restoration, and cached article lists once again honor the configured auto-sleep timeout.
 - `make simulator` now uses the repository's tracked EPUB fixtures and starts without FreshRSS credentials when the optional sibling developer checkout is absent.
 - Gujarati text on an EPUB's first image page now stays readable through the final image/grayscale refresh, and Gujarati book names render correctly in the book-action popup instead of turning into diamond placeholders.

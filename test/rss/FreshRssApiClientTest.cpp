@@ -32,11 +32,13 @@ TEST_F(FreshRssApiClientTest, AuthenticatesPagesAndUsesOnlyReadOnlyEndpoints) {
     EXPECT_EQ(request.url, "https://reader.example/api/greader.php/accounts/ClientLogin");
     EXPECT_NE(request.body.find("Email=reader"), std::string::npos);
     EXPECT_NE(request.body.find("Passwd=api-secret"), std::string::npos);
+    EXPECT_NE(request.body.find("service=reader"), std::string::npos);
     return emit(callback, "SID=ignored\nAuth=auth-value\n");
   };
   HttpDownloader::getHandler = [](const HttpDownloader::Request& request, const HttpDownloader::DataCallback& callback) {
     EXPECT_EQ(headerValue(request, "Authorization"), "GoogleLogin auth=auth-value");
     EXPECT_EQ(headerValue(request, "Accept"), "application/json");
+    EXPECT_EQ(headerValue(request, "Accept-Encoding"), "identity");
     if (request.url.find("/reader/api/0/subscription/list?output=json") != std::string::npos)
       return emit(callback, R"({"subscriptions":[{"id":"feed/one","title":"One"}]})");
     if (request.url.find("/reader/api/0/tag/list?output=json") != std::string::npos)
@@ -76,6 +78,26 @@ TEST_F(FreshRssApiClientTest, AuthenticatesPagesAndUsesOnlyReadOnlyEndpoints) {
     EXPECT_EQ(request.url.find("stream/items/ids"), std::string::npos);
   }
   EXPECT_EQ(auth, "auth-value");
+}
+
+TEST_F(FreshRssApiClientTest, ContinuesWhenTagListTransportFails) {
+  HttpDownloader::postHandler = [](const HttpDownloader::Request&, const HttpDownloader::DataCallback& callback) {
+    return emit(callback, "Auth=auth\n");
+  };
+  HttpDownloader::getHandler = [](const HttpDownloader::Request& request, const HttpDownloader::DataCallback& callback) {
+    if (request.url.find("/reader/api/0/tag/list") != std::string::npos) return false;
+    if (request.url.find("/reader/api/0/subscription/list") != std::string::npos)
+      return emit(callback, R"({"subscriptions":[{"id":"feed/one","title":"One"}]})");
+    return false;
+  };
+
+  FreshRssApiClient client(account());
+  FreshRssMetadata metadata;
+  std::string auth;
+  std::string error;
+  ASSERT_TRUE(client.fetchMetadata(metadata, auth, error));
+  EXPECT_EQ(metadata.subscriptions.size(), 1U);
+  EXPECT_TRUE(metadata.tags.empty());
 }
 
 TEST_F(FreshRssApiClientTest, EnforcesArticleLimitWhenAResponseIsLargerThanRequested) {

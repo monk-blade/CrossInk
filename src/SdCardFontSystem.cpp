@@ -1,5 +1,6 @@
 #include "SdCardFontSystem.h"
 
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -184,6 +185,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
     if (manager_.loadFamilyClosest(*family, renderer, targetPointSize)) {
       loadedFontPointSize_ = targetPointSize;
       setupUiFallbacks(renderer);
+      renderer.setLatinFallbackFont(SETTINGS.getBuiltInReaderFontId());
       LOG_DBG("SDFS", "Loaded SD font family: %s", wantedFamily);
     } else {
       LOG_ERR("SDFS", "Failed to load SD font family: %s (clearing)", wantedFamily);
@@ -232,6 +234,12 @@ void SdCardFontSystem::releaseForNetwork(GfxRenderer& renderer) {
   releaseLoadedFont(renderer);
 
   releaseRegistry();
+  // Built-in compressed fonts and any residual SD glyph pages can still hold
+  // multi-kilobyte decompressor slots after unloadAll(). FreshRSS TLS handshakes
+  // need a contiguous block on ESP32-C3, so drop those caches too.
+  if (FontCacheManager* fcm = renderer.getFontCacheManager()) {
+    fcm->clearCache();
+  }
   registryDirty_.store(true, std::memory_order_release);
 }
 
@@ -454,6 +462,7 @@ int SdCardFontSystem::restoreReaderFont(GfxRenderer& renderer) {
     }
     loadedFontPointSize_ = SETTINGS.getSdFontTargetPointSize();
     setupUiFallbacksDirect(renderer, familyName);
+    renderer.setLatinFallbackFont(SETTINGS.getBuiltInReaderFontId());
   }
 
   const int fontId = manager_.getFontId(manager_.currentFamilyName());

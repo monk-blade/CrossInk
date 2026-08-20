@@ -27,5 +27,7 @@ class HttpDownloader {
                        CancelCallback = nullptr);
   static bool fetchUrlWithHeaders(const std::string&, const DataCallback&, const std::vector<Header>&,
                                   CancelCallback = nullptr);
+  static void beginFreshRssSession() {}
+  static void endFreshRssSession() {}
   static void reset();
 };

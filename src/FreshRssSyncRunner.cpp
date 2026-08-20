@@ -4,6 +4,9 @@
 #include <HtmlRichText.h>
 #include <I18n.h>
 #include <Logging.h>
+#if defined(ARDUINO)
+#include <MemoryBudget.h>
+#endif
 
 #include <algorithm>
 #include <vector>
@@ -41,12 +44,20 @@ bool runFreshRssSync(FreshRssSyncHost& host, std::string& error) {
     return false;
   }
 
+#if defined(ARDUINO)
+  delay(200);
+#endif
+
   FreshRssSyncCursor previousCursor;
   const FreshRssAccount account = FRESHRSS_ACCOUNT.getAccount();
   const uint32_t accountIdentity = freshRssAccountIdentity(account);
   const bool hasCursor = FreshRssCache::loadSyncCursor(previousCursor);
   const bool canDelta = hasCursor && previousCursor.accountIdentity == accountIdentity &&
-                        previousCursor.articleLimit == SETTINGS.freshRssArticleLimit;
+                        previousCursor.articleLimit == SETTINGS.freshRssArticleLimit
+#if defined(ARDUINO)
+                        && MemoryBudget::hasHeapForFreshRssTls(MemoryBudget::snapshot())
+#endif
+      ;
 
   auto performSnapshot = [&](const bool delta, FreshRssSyncCursor& nextCursor, bool& deltaUnsupported,
                              bool& deltaInconsistent) {
@@ -90,13 +101,8 @@ bool runFreshRssSync(FreshRssSyncHost& host, std::string& error) {
           GujaratiIntegration::shapeLongUiString(item.title);
           GujaratiIntegration::shapeLongUiString(item.author);
           GujaratiIntegration::shapeLongUiString(item.origin);
-          size_t shapedWordCount = 0;
-          for (auto& paragraph : item.body) {
-            for (auto& word : paragraph.words) {
-              GujaratiIntegration::shapeSanitizedWord(word.text);
-              if ((++shapedWordCount & 31u) == 0 && host.paintProgress) host.paintProgress(false);
-            }
-          }
+          // Body Gujarati shaping runs when the article is opened; doing it here
+          // blocked the TLS read loop long enough to time out on ESP32-C3.
           const bool appended = writer.append(item);
           if (appended) {
             changedKeys.push_back(item.key);

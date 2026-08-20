@@ -272,7 +272,7 @@ bool ZipFile::loadAllFileStatSlims() {
   file.seek(zipDetails.centralDirOffset);
 
   uint32_t sig;
-  char itemName[256];
+  char itemName[ZIP_ITEM_NAME_CAPACITY];
   fileStatSlimCache.clear();
   fileStatSlimCache.reserve(zipDetails.totalEntries);
 
@@ -337,7 +337,7 @@ bool ZipFile::loadFileStatSlim(const char* filename, FileStatSlim* fileStat) {
   file.seek(startPos);
 
   uint32_t sig;
-  char itemName[256];
+  char itemName[ZIP_ITEM_NAME_CAPACITY];
 
   while (true) {
     uint32_t entryStart = file.position();
@@ -520,7 +520,7 @@ int ZipFile::fillUncompressedSizes(const SizeTarget* targets, const size_t targe
   const auto expectedMatches = static_cast<int>(targetCount);
   const SizeTarget* const targetEnd = targets + targetCount;
   uint32_t sig;
-  char itemName[256];
+  char itemName[ZIP_ITEM_NAME_CAPACITY];
 
   while (file.available()) {
     file.read(&sig, 4);
@@ -590,7 +590,7 @@ int ZipFile::fillEntryIdentities(const EntryTarget* targets, const size_t target
   const auto expectedMatches = static_cast<int>(targetCount);
   const EntryTarget* const targetEnd = targets + targetCount;
   uint32_t sig;
-  char itemName[256];
+  char itemName[ZIP_ITEM_NAME_CAPACITY];
 
   while (file.available()) {
     file.read(&sig, 4);

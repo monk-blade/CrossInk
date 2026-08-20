@@ -74,6 +74,12 @@ class HttpDownloader {
   static bool postForm(const std::string& url, const std::string& formBody, const DataCallback& onData,
                        const std::vector<Header>& headers = {}, CancelCallback shouldCancel = nullptr);
 
+  // Heap-allocate one SecureHttpClient for a FreshRSS sync burst so TLS
+  // keep-alive can skip a handshake per request on ESP32-C3. Call end after
+  // the last request and before SD fonts are reloaded.
+  static void beginFreshRssSession();
+  static void endFreshRssSession();
+
   /**
    * Stream a URL with cancellation/progress support and a detailed result.
    */

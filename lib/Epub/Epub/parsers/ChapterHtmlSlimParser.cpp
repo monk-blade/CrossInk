@@ -31,6 +31,7 @@
 // Minimum file size (in bytes) to show indexing popup - smaller chapters don't benefit from it
 constexpr size_t MIN_SIZE_FOR_POPUP = 10 * 1024;  // 10KB
 constexpr size_t PARSE_BUFFER_SIZE = 1024;
+constexpr size_t PARSE_BUFFER_SIZE_SMALL = 512;
 // Initial slab for the parse arena. Covers both style stacks (~2 KB) with headroom for growth.
 constexpr size_t PARSE_ARENA_SLAB_SIZE = 4 * 1024;
 constexpr size_t DEFAULT_BUFFERED_WORDS_BEFORE_LAYOUT = 350;
@@ -347,7 +348,12 @@ bool ChapterHtmlSlimParser::shouldAbortForLowMemory(const char* stage) {
   }
 
   auto heap = MemoryBudget::snapshot();
-  if (MemoryBudget::hasHeapForEpubTextLayoutStart(heap)) {
+  const bool continueLayout = completedPageCount > 0;
+  const auto hasRoom = [continueLayout](const MemoryBudget::HeapSnapshot snapshot) {
+    return continueLayout ? MemoryBudget::hasHeapForEpubTextLayoutContinue(snapshot)
+                          : MemoryBudget::hasHeapForEpubTextLayoutStart(snapshot);
+  };
+  if (hasRoom(heap)) {
     return false;
   }
 
@@ -358,14 +364,19 @@ bool ChapterHtmlSlimParser::shouldAbortForLowMemory(const char* stage) {
       LOG_DBG("EHP", "Released SD font caches before %s: free=%u->%u maxAlloc=%u->%u", stage, heap.freeHeap,
               afterRelease.freeHeap, heap.maxAllocHeap, afterRelease.maxAllocHeap);
       heap = afterRelease;
-      if (MemoryBudget::hasHeapForEpubTextLayoutStart(heap)) {
+      if (hasRoom(heap)) {
         return false;
       }
     }
   }
 
-  LOG_ERR("EHP", "Low heap during %s (%u free, %u max alloc); aborting section build", stage, heap.freeHeap,
-          heap.maxAllocHeap);
+  if (continueLayout) {
+    LOG_ERR("EHP", "Low heap during %s after %d pages (%u free, %u max alloc); stopping with partial chapter", stage,
+            completedPageCount, heap.freeHeap, heap.maxAllocHeap);
+  } else {
+    LOG_ERR("EHP", "Low heap during %s (%u free, %u max alloc); aborting section build", stage, heap.freeHeap,
+            heap.maxAllocHeap);
+  }
   lowMemoryAbort = true;
   return true;
 }
@@ -608,23 +619,39 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
 }
 
 size_t ChapterHtmlSlimParser::bufferedWordsBeforeLayoutLimit() const {
+  size_t limit;
   if (bionicReadingEnabled && guideReadingEnabled) {
-    return COMBINED_READING_AID_BUFFERED_WORDS_BEFORE_LAYOUT;
+    limit = COMBINED_READING_AID_BUFFERED_WORDS_BEFORE_LAYOUT;
+  } else if (bionicReadingEnabled || guideReadingEnabled) {
+    limit = SINGLE_READING_AID_BUFFERED_WORDS_BEFORE_LAYOUT;
+  } else {
+    limit = embeddedStyle ? CSS_BUFFERED_WORDS_BEFORE_LAYOUT : DEFAULT_BUFFERED_WORDS_BEFORE_LAYOUT;
   }
-  if (bionicReadingEnabled || guideReadingEnabled) {
-    return SINGLE_READING_AID_BUFFERED_WORDS_BEFORE_LAYOUT;
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  if (freeHeap < 48U * 1024U) {
+    limit = std::min(limit, static_cast<size_t>(80));
+  } else if (freeHeap < 64U * 1024U) {
+    limit = std::min(limit, static_cast<size_t>(120));
   }
-  return embeddedStyle ? CSS_BUFFERED_WORDS_BEFORE_LAYOUT : DEFAULT_BUFFERED_WORDS_BEFORE_LAYOUT;
+  return limit;
 }
 
 uint16_t ChapterHtmlSlimParser::textRunBytesBeforeLayoutLimit() const {
+  uint16_t limit;
   if (bionicReadingEnabled && guideReadingEnabled) {
-    return COMBINED_READING_AID_TEXT_RUN_BYTES_BEFORE_LAYOUT;
+    limit = COMBINED_READING_AID_TEXT_RUN_BYTES_BEFORE_LAYOUT;
+  } else if (bionicReadingEnabled || guideReadingEnabled) {
+    limit = SINGLE_READING_AID_TEXT_RUN_BYTES_BEFORE_LAYOUT;
+  } else {
+    limit = DEFAULT_TEXT_RUN_BYTES_BEFORE_LAYOUT;
   }
-  if (bionicReadingEnabled || guideReadingEnabled) {
-    return SINGLE_READING_AID_TEXT_RUN_BYTES_BEFORE_LAYOUT;
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  if (freeHeap < 48U * 1024U) {
+    limit = std::min(limit, static_cast<uint16_t>(768));
+  } else if (freeHeap < 64U * 1024U) {
+    limit = std::min(limit, static_cast<uint16_t>(1024));
   }
-  return DEFAULT_TEXT_RUN_BYTES_BEFORE_LAYOUT;
+  return limit;
 }
 
 void ChapterHtmlSlimParser::flushLongTextRunIfNeeded(const bool force) {
@@ -1895,6 +1922,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
           const auto heapBeforeImage = MemoryBudget::snapshot();
 
           if (self->lowMemoryImageFallback) {
+            LOG_ERR("EHP", "Skipping remaining image due to earlier low heap: %s", src.c_str());
             self->skipCurrentElement();
             return;
           } else {
@@ -3286,13 +3314,18 @@ ChapterHtmlSlimParser::ParseStatus ChapterHtmlSlimParser::parseStep() {
     return ParseStatus::Error;
   }
 
-  void* const buf = XML_GetBuffer(activeParser, PARSE_BUFFER_SIZE);
+  size_t parseBufSize = PARSE_BUFFER_SIZE;
+  void* buf = XML_GetBuffer(activeParser, parseBufSize);
+  if (!buf) {
+    parseBufSize = PARSE_BUFFER_SIZE_SMALL;
+    buf = XML_GetBuffer(activeParser, parseBufSize);
+  }
   if (!buf) {
     LOG_ERR("EHP", "Couldn't allocate memory for buffer");
     return ParseStatus::Error;
   }
 
-  const size_t len = parseFile_.read(buf, PARSE_BUFFER_SIZE);
+  const size_t len = parseFile_.read(buf, parseBufSize);
   parseFileOffset_ = parseFile_.position();
   if (len == 0 && parseFile_.available() > 0) {
     LOG_ERR("EHP", "File read error");
@@ -3312,6 +3345,11 @@ ChapterHtmlSlimParser::ParseStatus ChapterHtmlSlimParser::parseStep() {
   }
 
   if (lowMemoryAbort) {
+    const bool hasPartial = completedPageCount > 0 || (currentPage && !currentPage->elements.empty());
+    if (hasPartial) {
+      LOG_ERR("EHP", "Stopping section parse after %d pages due to low heap", completedPageCount);
+      return ParseStatus::Done;
+    }
     LOG_ERR("EHP", "Aborting section parse due to low heap");
     return ParseStatus::Error;
   }
@@ -3350,14 +3388,34 @@ bool ChapterHtmlSlimParser::finishParse() {
   parseFileOffset_ = 0;
   parseFileSize_ = 0;
 
+  const auto keepPartialIfPossible = [this]() -> bool {
+    currentTextBlock.reset();
+    if (!previewStopRequested && currentPage && !currentPage->elements.empty()) {
+      completeCurrentPage();
+      completedPageCount++;
+    }
+    currentPage.reset();
+    parseArena_.release();
+    inlineStyleBuf_ = nullptr;
+    blockStyleBuf_ = nullptr;
+    if (completedPageCount > 0) {
+      LOG_ERR("EHP", "Kept %d pages after low-heap stop (free=%u maxAlloc=%u)", completedPageCount, ESP.getFreeHeap(),
+              ESP.getMaxAllocHeap());
+      return true;
+    }
+    LOG_ERR("EHP", "Low-heap stop with no readable pages");
+    return false;
+  };
+
+  if (lowMemoryAbort) {
+    return keepPartialIfPossible();
+  }
+
   if (malformedMarkupTruncated) {
     LOG_DBG("EHP", "Malformed markup encountered; finalizing partial chapter content");
     flushMalformedPartialContent();
     if (lowMemoryAbort) {
-      parseArena_.release();
-      inlineStyleBuf_ = nullptr;
-      blockStyleBuf_ = nullptr;
-      return false;
+      return keepPartialIfPossible();
     }
   }
 
@@ -3370,13 +3428,11 @@ bool ChapterHtmlSlimParser::finishParse() {
 
   if (currentTextBlock && !previewStopRequested) {
     if (shouldAbortForLowMemory("final page layout")) {
-      abortParse();
-      return false;
+      return keepPartialIfPossible();
     }
     makePages();
     if (lowMemoryAbort) {
-      abortParse();
-      return false;
+      return keepPartialIfPossible();
     }
     if (!pendingAnchorId.empty()) {
       anchorData.push_back({std::move(pendingAnchorId), static_cast<uint16_t>(completedPageCount)});

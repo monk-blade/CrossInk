@@ -107,7 +107,7 @@ the Noto glyph names exist in them and the firmware (one glyph per PUA) can't us
 them directly. Bake their shaped clusters into single glyphs first:
 
 ```sh
-pip install uharfbuzz
+python3 -m pip install uharfbuzz
 for w in 400:Regular 700:Bold; do
   python3 lib/GujaratiShaper/scripts/bake_sd_font.py \
     --font "Rasa[wght].ttf" --weight "${w%%:*}" \
@@ -134,7 +134,8 @@ the Gujarati face — selectable from the normal font picker, with no firmware
 changes. `build_combined_font.py` runs the bake + merge in one step:
 
 ```sh
-pip install fonttools uharfbuzz freetype-py
+python3 -m pip install fonttools uharfbuzz freetype-py
+# or: make setup   # installs the same deps into .venv/
 LEX=lib/EpdFont/builtinFonts/source/LexendDeca
 
 # LexendDeca + Rasa (Rasa is a variable font -> pick weights)
@@ -143,6 +144,14 @@ python3 lib/GujaratiShaper/scripts/build_combined_font.py \
   --gujarati-regular "Rasa[wght].ttf" --gujarati-regular-weight 400 \
   --gujarati-bold    "Rasa[wght].ttf" --gujarati-bold-weight 700 \
   --name LexendDecaRasa --output-dir ./fs_/.fonts/LexendDecaRasa/
+
+# LexendDeca + Rasa 500 with larger Gujarati at reading sizes (Latin stays 16/18pt)
+python3 lib/GujaratiShaper/scripts/build_combined_font.py \
+  --latin-regular $LEX/LexendDeca-Regular.ttf --latin-bold $LEX/LexendDeca-Bold.ttf \
+  --gujarati-regular "Rasa[wght].ttf" --gujarati-regular-weight 500 \
+  --gujarati-bold    "Rasa[wght].ttf" --gujarati-bold-weight 700 \
+  --gujarati-sizes 16:18,18:20 \
+  --name LexendDecaRasa500 --output-dir ./fs_/.fonts/LexendDecaRasa500/
 
 # LexendDeca + Hind Vadodara (static weights)
 python3 lib/GujaratiShaper/scripts/build_combined_font.py \
@@ -156,7 +165,13 @@ Then select the family (`sdFontFamilyName`) as usual. Notes: one combined file
 pairs one Latin face with one Gujarati face (build separate files for other
 pairings); vertical metrics come from the Latin (primary) face; the Gujarati
 font needs conjunct coverage (the bake step handles Rasa/Hind Vadodara/Mukta
-Vaani style component fonts).
+Vaani style component fonts). Rebuild with `builtin` in `--intervals` (see
+`build_combined_font.py`) so Latin coverage matches the firmware fonts. Use
+`--gujarati-sizes 16:18,18:20` when Gujarati should rasterize larger than the
+Latin body at specific reading sizes while the `.cpfont` filenames and picker
+still use the normal 16/18pt labels. Existing
+hybrid files keep working: missing Latin letters fall back per glyph to the
+built-in reader font at draw time.
 
 The builder emits sizes `8,10,12,14,16,18` by default. Keep the small sizes
 (8/10 pt): the reader status bar and reader menu use the selected SD family as

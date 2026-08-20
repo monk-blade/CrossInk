@@ -102,6 +102,8 @@ class GfxRenderer {
   // appears at the same point size as the surrounding UI text. Populated by the
   // app-level SD font setup when an SD family is loaded. See resolveTextFontId().
   std::map<int, int> fallbackFontMap_;
+  int latinFallbackFontId_ = 0;
+  const EpdFontFamily* familyForCodepoint(const EpdFontFamily& primary, uint32_t cp, EpdFontFamily::Style style) const;
 
   // If `text` contains a CJK codepoint that `fontId` cannot render and `fontId`
   // has a registered fallback, returns the fallback id; otherwise returns
@@ -170,7 +172,13 @@ class GfxRenderer {
   // Register/clear size-matched CJK UI fallbacks (see fallbackFontMap_).
   // setFallbackFont maps a primary UI font id to an SD font id of the same size.
   void setFallbackFont(int primaryFontId, int fallbackFontId) { fallbackFontMap_[primaryFontId] = fallbackFontId; }
-  void clearFallbackFonts() { fallbackFontMap_.clear(); }
+  // Per-glyph Latin fallback when an SD/hybrid family covers Gujarati (and PUA)
+  // but is missing some Latin/punctuation that a built-in reader font has.
+  void setLatinFallbackFont(int fontId) { latinFallbackFontId_ = fontId; }
+  void clearFallbackFonts() {
+    fallbackFontMap_.clear();
+    latinFallbackFontId_ = 0;
+  }
   // Ensure SD card font glyph data is loaded for the given text. Called from layout code
   // (which holds a const GfxRenderer&) before measuring word widths. Safe to call on non-SD fonts (no-op).
   // styleMask: bitmask of styles to prepare (bit 0=regular, 1=bold, 2=italic, 3=bold-italic).

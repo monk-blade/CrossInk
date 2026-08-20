@@ -5769,7 +5769,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
   const bool pageHasImages = page->hasImages();
   const bool pageHasImagesNeedingDecode = pageHasImages && page->hasImagesNeedingDecode();
   const bool foregroundBlack = ReaderUtils::readerForegroundBlack();
-  const bool needsImageGrayscale = pageHasImages;
+  // Images blit in BW only; grayscale overlays are text anti-aliasing.
+  const bool needsImageGrayscale = false;
   const bool needsTextGrayscale = SETTINGS.textAntiAliasing && foregroundBlack;
   const bool needsAnyGrayscale = needsTextGrayscale || needsImageGrayscale;
   const bool tiledGrayscale = needsAnyGrayscale && renderer.supportsStripGrayscale();
@@ -5859,6 +5860,15 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int fo
         cleanImageBasePending = false;
       }
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+
+      // Image decode may have released SD glyph caches to free C3 heap.
+      // Re-prewarm before restoring the blanked image rect so Gujarati text
+      // and the image pixels share the second compose.
+      {
+        auto restoreScope = fcm->createPrewarmScope();
+        page->renderText(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+        restoreScope.endScanAndPrewarm();
+      }
 
       // Re-render page content to restore images into the blanked area
       // Status bar is not re-rendered here to avoid reading stale dynamic values (e.g. battery %)

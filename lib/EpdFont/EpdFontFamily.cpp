@@ -214,6 +214,10 @@ const EpdGlyph* EpdFontFamily::getGlyph(const uint32_t cp, const Style style) co
 
 uint32_t EpdFontFamily::getFallbackCodepoint(const uint32_t cp, const Style style) const {
   if (findGlyphData(cp, style).glyph) return cp;
+  // SD fonts keep only the current page's glyphs in the mini interval table.
+  // Coverage can still be true for a glyph that will load via onGlyphMiss —
+  // do not map those to U+FFFD or drawText paints a diamond before getGlyph().
+  if (hasCodepoint(cp, style)) return cp;
   const uint32_t aliasCp = syntheticGlyph::aliasCodepoint(cp);
   if (aliasCp != cp) {
     return findGlyphData(aliasCp, style).glyph ? aliasCp : REPLACEMENT_GLYPH;

@@ -152,6 +152,8 @@ Forks with different UI should call `shapeUiString()` anywhere Gujarati text is 
 
 In `src/SdCardFontSystem.cpp`, include Gujarati in the script probe (e.g. codepoint `0x0A95` KA) so UI strings containing Gujarati use the SD font when built-ins lack glyphs.
 
+Hybrid Latin+Gujarati `.cpfont` files should be built with `--intervals builtin,gujarati,...` so Latin coverage matches the firmware built-ins. Already-installed hybrid fonts (for example LexendDecaHindVadodara) still get a per-glyph built-in Latin fallback at draw time for letters the SD file omitted or did not prewarm.
+
 ### 8. Tests (recommended)
 
 ```bash

@@ -26,6 +26,7 @@
 #include "activities/reader/RssArticleActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "network/HttpDownloader.h"
 
 namespace {
 constexpr unsigned long SYNC_PROGRESS_PAINT_MS = 250;
@@ -326,11 +327,13 @@ void RssItemListActivity::fetchFeed() {
     // in SETTINGS and is restored after the network clients are destroyed.
     sdFontSystem.releaseForNetwork(renderer);
   }
+  HttpDownloader::beginFreshRssSession();
   LOG_INF("FRSS", "Refresh memory prepared: free %u->%u maxAlloc %u->%u", freeBeforeFontRelease,
           ESP.getFreeHeap(), maxAllocBeforeFontRelease, ESP.getMaxAllocHeap());
 
   std::string error;
   const bool synced = runFreshRssSync(host, error);
+  HttpDownloader::endFreshRssSession();
   disconnectWifi();
   {
     RenderLock lock(*this);

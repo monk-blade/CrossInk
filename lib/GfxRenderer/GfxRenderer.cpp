@@ -27,8 +27,32 @@ uint8_t resolveSdCardStyle(const SdCardFont& font, const EpdFontFamily::Style st
   return font.resolveStyle(static_cast<uint8_t>(style));
 }
 
+bool isLatinFallbackCandidate(const uint32_t cp) {
+  if (cp >= 0x20 && cp <= 0x024F) return true;
+  if (cp >= 0x1E00 && cp <= 0x1EFF) return true;
+  if (cp >= 0x2000 && cp <= 0x206F) return true;
+  if (cp >= 0x20A0 && cp <= 0x20CF) return true;
+  if (cp >= 0xFB00 && cp <= 0xFB06) return true;
+  return false;
+}
+
 int32_t resolveSdCardAdvanceFP(const SdCardFont& sdFont, const EpdFontFamily& font, const uint32_t cp,
-                               const EpdFontFamily::Style style, const uint8_t styleIdx) {
+                               const EpdFontFamily::Style style, const uint8_t styleIdx,
+                               const EpdFontFamily* latinFallback) {
+  if (font.hasCodepoint(cp, style) || utf8IsCombiningMark(cp)) {
+    uint16_t advanceFP = sdFont.getAdvance(cp, styleIdx);
+    if (advanceFP != 0 || utf8IsCombiningMark(cp)) {
+      return advanceFP;
+    }
+    if (sdFont.readAdvance(cp, styleIdx, &advanceFP)) {
+      return advanceFP;
+    }
+  }
+  if (latinFallback && isLatinFallbackCandidate(cp) &&
+      (latinFallback->hasCodepoint(cp, style) || latinFallback->findGlyphData(cp, style).glyph)) {
+    const EpdGlyph* glyph = latinFallback->getGlyph(cp, style);
+    return glyph ? glyph->advanceX : 0;
+  }
   uint16_t advanceFP = sdFont.getAdvance(cp, styleIdx);
   if (advanceFP != 0 || utf8IsCombiningMark(cp)) {
     return advanceFP;
@@ -1044,6 +1068,24 @@ const char* resolveVisualText(const char* text, std::string& visualBuffer, const
 }
 }  // namespace
 
+const EpdFontFamily* GfxRenderer::familyForCodepoint(const EpdFontFamily& primary, const uint32_t cp,
+                                                     const EpdFontFamily::Style style) const {
+  if (primary.hasCodepoint(cp, style) || primary.findGlyphData(cp, style).glyph) {
+    return &primary;
+  }
+  if (!isLatinFallbackCandidate(cp) || latinFallbackFontId_ == 0) {
+    return &primary;
+  }
+  const auto it = fontMap.find(latinFallbackFontId_);
+  if (it == fontMap.end()) return &primary;
+  const EpdFontFamily& fallback = it->second;
+  if (&fallback == &primary) return &primary;
+  if (fallback.hasCodepoint(cp, style) || fallback.findGlyphData(cp, style).glyph) {
+    return &fallback;
+  }
+  return &primary;
+}
+
 int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style,
                               const BidiUtils::BidiBaseDir baseDir) const {
   if (text == nullptr || *text == '\0') {
@@ -1069,9 +1111,14 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
       return 0;
     }
     const auto& font = fontIt->second;
+    const EpdFontFamily* latinFallback = nullptr;
+    if (latinFallbackFontId_ != 0) {
+      const auto lit = fontMap.find(latinFallbackFontId_);
+      if (lit != fontMap.end() && &lit->second != &font) latinFallback = &lit->second;
+    }
     while (uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&textCursor))) {
       if (utf8IsGujaratiOverlayMark(cp)) continue;
-      widthFP += resolveSdCardAdvanceFP(*sdIt->second, font, cp, style, styleIdx);
+      widthFP += resolveSdCardAdvanceFP(*sdIt->second, font, cp, style, styleIdx, latinFallback);
     }
     return fp4::toPixel(widthFP);
   }
@@ -1202,8 +1249,11 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     } else {
       cp = font.applyLigatures(cp, textCursor, style);
     }
-    cp = font.getFallbackCodepoint(cp, style);
-    const bool hasRealGlyph = font.findGlyphData(cp, style).glyph != nullptr;
+    const EpdFontFamily* glyphFont = familyForCodepoint(font, cp, style);
+    if (glyphFont == &font) {
+      cp = font.getFallbackCodepoint(cp, style);
+    }
+    const bool hasRealGlyph = glyphFont->findGlyphData(cp, style).glyph != nullptr;
 
     // Differential rounding: snap (previous advance + current kern) as one unit so
     // identical character pairs always produce the same pixel step regardless of
@@ -1262,7 +1312,7 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
       continue;
     }
 
-    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    const EpdGlyph* glyph = glyphFont->getGlyph(cp, style);
 
     if (!glyph) {
       // Advance was already flushed into lastBaseX above; clear base metrics so the
@@ -1290,11 +1340,11 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
 
     if (isSupSub) {
       // yPos already carries the vertical offset applied by TextBlock::render().
-      renderCharScaled(*this, renderMode, font, cp, lastBaseX, yPos, black, style);
+      renderCharScaled(*this, renderMode, *glyphFont, cp, lastBaseX, yPos, black, style);
     } else if (scaledSmallCap) {
-      renderCharSmallCaps(*this, renderMode, font, cp, lastBaseX, yPos, black, style);
+      renderCharSmallCaps(*this, renderMode, *glyphFont, cp, lastBaseX, yPos, black, style);
     } else {
-      renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, lastBaseX, yPos, black, style);
+      renderCharImpl<TextRotation::None>(*this, renderMode, *glyphFont, cp, lastBaseX, yPos, black, style);
     }
     gujaratiOverlay.lastBaseX = lastBaseX;
     gujaratiOverlay.prevAdvanceFP = prevAdvanceFP;
@@ -2781,6 +2831,11 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
       return 0;
     }
     const auto& font = fontIt->second;
+    const EpdFontFamily* latinFallback = nullptr;
+    if (latinFallbackFontId_ != 0) {
+      const auto lit = fontMap.find(latinFallbackFontId_);
+      if (lit != fontMap.end() && &lit->second != &font) latinFallback = &lit->second;
+    }
     uint32_t lastCp = 0;
     bool lastScaledSmallCap = false;
     while (uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text))) {
@@ -2791,7 +2846,7 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
       if (scaledSmallCap) {
         cp = smallCapsUppercaseCodepoint(cp);
       }
-      const int32_t advFP = resolveSdCardAdvanceFP(*sdIt->second, font, cp, style, styleIdx);
+      const int32_t advFP = resolveSdCardAdvanceFP(*sdIt->second, font, cp, style, styleIdx, latinFallback);
       if (isSupSub) {
         widthFP += halfAdvanceFP(advFP);
       } else if (scaledSmallCap) {
@@ -2843,8 +2898,11 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
     } else {
       cp = font.applyLigatures(cp, text, style);
     }
-    cp = font.getFallbackCodepoint(cp, style);
-    const bool hasRealGlyph = font.findGlyphData(cp, style).glyph != nullptr;
+    const EpdFontFamily* glyphFont = familyForCodepoint(font, cp, style);
+    if (glyphFont == &font) {
+      cp = font.getFallbackCodepoint(cp, style);
+    }
+    const bool hasRealGlyph = glyphFont->findGlyphData(cp, style).glyph != nullptr;
 
     // Differential rounding: snap (previous advance + current kern) together,
     // matching drawText so measurement and rendering agree exactly.
@@ -2884,7 +2942,7 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, const EpdFo
       continue;
     }
 
-    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    const EpdGlyph* glyph = glyphFont->getGlyph(cp, style);
     prevAdvanceFP = glyph ? glyph->advanceX : 0;
     if ((style & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
       prevAdvanceFP = halfAdvanceFP(prevAdvanceFP);
@@ -2988,8 +3046,11 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
     }
 
     cp = font.applyLigatures(cp, text, style);
-    cp = font.getFallbackCodepoint(cp, style);
-    const bool hasRealGlyph = font.findGlyphData(cp, style).glyph != nullptr;
+    const EpdFontFamily* glyphFont = familyForCodepoint(font, cp, style);
+    if (glyphFont == &font) {
+      cp = font.getFallbackCodepoint(cp, style);
+    }
+    const bool hasRealGlyph = glyphFont->findGlyphData(cp, style).glyph != nullptr;
 
     // Differential rounding: snap (previous advance + current kern) as one unit,
     // subtracting for the rotated coordinate direction.
@@ -3040,7 +3101,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
       continue;
     }
 
-    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    const EpdGlyph* glyph = glyphFont->getGlyph(cp, style);
 
     if (!glyph) {
       // Advance was already flushed into lastBaseY above; clear base metrics so the
@@ -3058,7 +3119,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
     lastBaseTop = glyph->top;
     prevAdvanceFP = glyph->advanceX;  // 12.4 fixed-point
 
-    renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, font, cp, x, lastBaseY, black, style);
+    renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, *glyphFont, cp, x, lastBaseY, black, style);
     prevCp = cp;
   }
 }

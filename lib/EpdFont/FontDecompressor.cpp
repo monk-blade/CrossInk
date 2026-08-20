@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <Utf8.h>
 
 #include <cstdlib>
@@ -255,8 +256,13 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
     return -1;
   }
 
-  // Step 1: Collect unique glyph indices needed for this page
-  uint32_t neededGlyphs[MAX_PAGE_GLYPHS];
+  // Step 1: Collect unique glyph indices needed for this page.
+  // Heap-allocated: MAX_PAGE_GLYPHS * 4 bytes exceeds the 256-byte stack budget.
+  auto neededGlyphs = makeUniqueNoThrow<uint32_t[]>(MAX_PAGE_GLYPHS);
+  if (!neededGlyphs) {
+    LOG_ERR("FDC", "Failed to allocate prewarm glyph index buffer (%u bytes)", MAX_PAGE_GLYPHS * 4);
+    return -1;
+  }
   uint16_t glyphCount = 0;
   bool glyphCapWarned = false;
 

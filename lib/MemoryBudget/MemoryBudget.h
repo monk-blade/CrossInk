@@ -33,6 +33,11 @@ constexpr uint32_t EPUB_INLINE_IMAGE_MIN_FREE = 72U * 1024U;
 constexpr uint32_t EPUB_INLINE_IMAGE_MIN_MAX_ALLOC = 48U * 1024U;
 constexpr uint32_t EPUB_TEXT_LAYOUT_MIN_FREE = 44U * 1024U;
 constexpr uint32_t EPUB_TEXT_LAYOUT_MIN_MAX_ALLOC = 32U * 1024U;
+// After at least one page is written, keep laying out until free heap is this
+// low. The 44 KB start gate is for the first page's scratch/ParsedText; aborting
+// a whole chapter because a later page dipped below 44 KB left X3 users with no
+// readable partial. 16 KB still covers a TextBlock flush and page serialize.
+constexpr uint32_t EPUB_TEXT_LAYOUT_CONTINUE_MIN_FREE = 16U * 1024U;
 constexpr uint32_t EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_FREE = 120U * 1024U;
 constexpr uint32_t EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_MAX_ALLOC = 80U * 1024U;
 constexpr uint32_t OPTIONAL_EPUB_REBUILD_MIN_FREE = 96U * 1024U;
@@ -45,8 +50,14 @@ constexpr uint32_t DICTIONARY_SD_FONT_MIN_FREE = 64U * 1024U;
 constexpr uint32_t DICTIONARY_SD_FONT_MIN_MAX_ALLOC = 32U * 1024U;
 constexpr uint32_t IMAGE_DECODER_HEADROOM = 16U * 1024U;
 constexpr uint32_t JPEG_DECODER_APPROX_BYTES = 20U * 1024U;
+constexpr uint32_t PNG_DECODER_APPROX_BYTES = 44U * 1024U;
 constexpr uint32_t EPUB_INLINE_JPEG_MIN_FREE = JPEG_DECODER_APPROX_BYTES + IMAGE_DECODER_HEADROOM;
 constexpr uint32_t EPUB_INLINE_JPEG_MIN_MAX_ALLOC = JPEG_DECODER_APPROX_BYTES;
+// wolfSSL allocates a fresh CTX+SSL object per TLS handshake on ESP32-C3. After
+// SD-font glyph caches and the decompressor page slots, the largest contiguous
+// block is often the limiting factor, not total free heap.
+constexpr uint32_t FRESHRSS_TLS_MIN_FREE = 48U * 1024U;
+constexpr uint32_t FRESHRSS_TLS_MIN_MAX_ALLOC = 24U * 1024U;
 
 inline HeapSnapshot snapshot() { return {ESP.getFreeHeap(), ESP.getMaxAllocHeap()}; }
 
@@ -86,8 +97,16 @@ inline bool hasHeapForEpubTextLayoutStart(const HeapSnapshot heap) {
   return heap.freeHeap >= EPUB_TEXT_LAYOUT_MIN_FREE;
 }
 
+inline bool hasHeapForEpubTextLayoutContinue(const HeapSnapshot heap) {
+  return heap.freeHeap >= EPUB_TEXT_LAYOUT_CONTINUE_MIN_FREE;
+}
+
 inline bool hasHeapForDictionarySdFont(const HeapSnapshot heap) {
   return hasHeap(heap, DICTIONARY_SD_FONT_MIN_FREE, DICTIONARY_SD_FONT_MIN_MAX_ALLOC);
+}
+
+inline bool hasHeapForFreshRssTls(const HeapSnapshot heap) {
+  return hasHeap(heap, FRESHRSS_TLS_MIN_FREE, FRESHRSS_TLS_MIN_MAX_ALLOC);
 }
 
 inline char asciiLower(const char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }

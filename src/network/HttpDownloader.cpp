@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <MemoryBudget.h>
 #include <WiFi.h>
 #include <base64.h>
 #if defined(FREEINK_NET_WOLFSSL)
@@ -28,6 +29,7 @@ constexpr uint32_t PROGRESS_UPDATE_MS = 250;
 constexpr int HTTP_RX_BUF = 4096;
 constexpr int HTTP_TX_BUF = 1024;
 constexpr int HTTP_TIMEOUT_MS = 60000;
+constexpr int FRESHRSS_HTTP_TIMEOUT_MS = 120000;
 constexpr int HTTP_READ_POLL_TIMEOUT_MS = 5000;
 constexpr uint32_t DOWNLOAD_IDLE_TIMEOUT_MS = 30000;
 constexpr size_t DEFAULT_DOWNLOAD_BUFFER_SIZE = 2048;
@@ -177,27 +179,43 @@ using Header = HttpDownloader::Header;
 // GoogleLogin Authorization header. Keep this path separate so the mature
 // file-download/resume behavior above remains unchanged.
 #if defined(FREEINK_NET_WOLFSSL)
-HttpDownloader::DownloadError runRequestWolf(const std::string& url, const char* method,
-                                             const std::string& payload, const std::vector<Header>& headers,
-                                             Sink& sink) {
-  freeink::SecureHttpClient http;
-  http.setTimeout(HTTP_TIMEOUT_MS);
+// One heap SecureHttpClient for a FreshRSS sync. Stack allocation put the
+// ~2 KB read chunk on the network task; constructing a new client per request
+// also forced a full TLS handshake after the tiny ClientLogin response.
+std::unique_ptr<freeink::SecureHttpClient> g_freshRssClient;
+
+constexpr int FRESHRSS_HTTP_ATTEMPTS = 3;
+constexpr uint32_t FRESHRSS_RETRY_DELAY_MS = 400;
+
+void configureFreshRssHttpClient(freeink::SecureHttpClient& http) {
+  http.setTimeout(FRESHRSS_HTTP_TIMEOUT_MS);
   http.setInsecure();
   http.setFollowRedirects(MAX_REDIRECTS);
+  http.setReuse(true);
+  http.setUserAgent("CrossInk-ESP32-" CROSSINK_VERSION);
+}
+
+void releaseFreshRssTransport(freeink::SecureHttpClient* http) {
+  if (http) http->end();
+}
+
+HttpDownloader::DownloadError runRequestWolfOnce(const std::string& url, const char* method,
+                                                 const std::string& payload, const std::vector<Header>& headers,
+                                                 Sink& sink, freeink::SecureHttpClient* http) {
   LOG_DBG("FRSS", "%s %s start (free=%u maxAlloc=%u wifi=%d rssi=%d)", method, url.c_str(), ESP.getFreeHeap(),
           ESP.getMaxAllocHeap(), static_cast<int>(WiFi.status()), WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
-  if (!http.begin(url)) {
+  if (!http->begin(url)) {
     LOG_ERR("FRSS", "%s %s rejected by HTTP client", method, url.c_str());
     return HttpDownloader::HTTP_ERROR;
   }
-  http.setUserAgent("CrossInk-ESP32-" CROSSINK_VERSION);
-  for (const auto& header : headers) http.addHeader(header.first, header.second);
+  http->setUserAgent("CrossInk-ESP32-" CROSSINK_VERSION);
+  for (const auto& header : headers) http->addHeader(header.first, header.second);
 
-  const int status = http.sendRequest(
+  const int status = http->sendRequest(
       method, reinterpret_cast<const uint8_t*>(payload.data()), payload.size(),
-      [&http, &sink](const uint8_t* data, const size_t len) {
-        if (http.getStatus() != 200) return true;
-        if (sink.total == 0 && http.hasContentLength()) sink.total = http.getContentLength();
+      [http, &sink](const uint8_t* data, const size_t len) {
+        if (http->getStatus() != 200) return true;
+        if (sink.total == 0 && http->hasContentLength()) sink.total = http->getContentLength();
         if (!sink.write(data, len)) return false;
         sink.downloaded += len;
         if (sink.progress && sink.total > 0) sink.progress(sink.downloaded, sink.total);
@@ -205,29 +223,71 @@ HttpDownloader::DownloadError runRequestWolf(const std::string& url, const char*
       },
       [&sink]() { return isCancelRequested(sink.cancelFlag, sink.shouldCancel); });
   LOG_DBG("FRSS", "%s %s finished status=%d complete=%d callbackAborted=%d bytes=%zu contentLength=%zu free=%u maxAlloc=%u",
-          method, url.c_str(), status, http.responseComplete(), http.callbackAborted(), sink.downloaded,
-          http.hasContentLength() ? http.getContentLength() : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-  if (http.aborted()) {
+          method, url.c_str(), status, http->responseComplete(), http->callbackAborted(), sink.downloaded,
+          http->hasContentLength() ? http->getContentLength() : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  if (http->aborted()) {
     LOG_ERR("FRSS", "HTTP request cancelled after %zu/%zu bytes", sink.downloaded, sink.total);
     return HttpDownloader::ABORTED;
   }
   if (status != 200) {
     LOG_ERR("FRSS", "HTTP %s %s failed: status=%d after %zu/%zu bytes (complete=%d)", method, url.c_str(), status,
-            sink.downloaded, sink.total, http.responseComplete());
+            sink.downloaded, sink.total, http->responseComplete());
     logNetworkState("FreshRSS HTTP status failure");
     return HttpDownloader::HTTP_ERROR;
   }
-  if (http.callbackAborted()) {
+  if (http->callbackAborted()) {
     LOG_ERR("FRSS", "HTTP response sink failed after %zu/%zu bytes", sink.downloaded, sink.total);
     return HttpDownloader::FILE_ERROR;
   }
-  if (!http.responseComplete()) {
+  if (!http->responseComplete()) {
     LOG_ERR("FRSS", "HTTP %s %s response incomplete after %zu/%zu bytes", method, url.c_str(), sink.downloaded,
             sink.total);
     logNetworkState("FreshRSS incomplete response");
     return HttpDownloader::HTTP_ERROR;
   }
   return HttpDownloader::OK;
+}
+
+HttpDownloader::DownloadError runRequestWolf(const std::string& url, const char* method,
+                                             const std::string& payload, const std::vector<Header>& headers,
+                                             Sink& sink) {
+  for (int attempt = 0; attempt < FRESHRSS_HTTP_ATTEMPTS; ++attempt) {
+    if (attempt > 0) {
+      LOG_INF("FRSS", "HTTP retry %d/%d for %s %s (free=%u maxAlloc=%u)", attempt + 1, FRESHRSS_HTTP_ATTEMPTS, method,
+              url.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      releaseFreshRssTransport(g_freshRssClient.get());
+      delay(FRESHRSS_RETRY_DELAY_MS);
+    }
+
+    const auto heap = MemoryBudget::snapshot();
+    if (!MemoryBudget::hasHeapForFreshRssTls(heap)) {
+      LOG_ERR("FRSS", "Insufficient heap for TLS before %s %s (free=%u maxAlloc=%u need free>=%u maxAlloc>=%u)", method,
+              url.c_str(), heap.freeHeap, heap.maxAllocHeap, MemoryBudget::FRESHRSS_TLS_MIN_FREE,
+              MemoryBudget::FRESHRSS_TLS_MIN_MAX_ALLOC);
+      if (attempt + 1 < FRESHRSS_HTTP_ATTEMPTS) continue;
+      return HttpDownloader::HTTP_ERROR;
+    }
+
+    std::unique_ptr<freeink::SecureHttpClient> localClient;
+    freeink::SecureHttpClient* http = g_freshRssClient.get();
+    if (!http) {
+      localClient = makeUniqueNoThrow<freeink::SecureHttpClient>();
+      if (!localClient) {
+        LOG_ERR("FRSS", "OOM: HTTP client (free=%u maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        if (attempt + 1 < FRESHRSS_HTTP_ATTEMPTS) continue;
+        return HttpDownloader::HTTP_ERROR;
+      }
+      configureFreshRssHttpClient(*localClient);
+      http = localClient.get();
+    }
+
+    const HttpDownloader::DownloadError result = runRequestWolfOnce(url, method, payload, headers, sink, http);
+    // Drop the wolfSSL CTX/SSL before the next API call in the same sync burst.
+    // Reusing the SecureHttpClient object avoids reallocating the client itself.
+    releaseFreshRssTransport(http);
+    if (result == HttpDownloader::OK || result == HttpDownloader::ABORTED) return result;
+  }
+  return HttpDownloader::HTTP_ERROR;
 }
 #endif
 
@@ -668,6 +728,34 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   return runGetDefault(url, username, password, sink, bufferSize);
 }
 }  // namespace
+
+void HttpDownloader::beginFreshRssSession() {
+#if defined(FREEINK_NET_WOLFSSL)
+  endFreshRssSession();
+  const auto heap = MemoryBudget::snapshot();
+  if (!MemoryBudget::hasHeapForFreshRssTls(heap)) {
+    LOG_ERR("FRSS", "Low heap before HTTP session (free=%u maxAlloc=%u need free>=%u maxAlloc>=%u)", heap.freeHeap,
+            heap.maxAllocHeap, MemoryBudget::FRESHRSS_TLS_MIN_FREE, MemoryBudget::FRESHRSS_TLS_MIN_MAX_ALLOC);
+  }
+  g_freshRssClient = makeUniqueNoThrow<freeink::SecureHttpClient>();
+  if (!g_freshRssClient) {
+    LOG_ERR("FRSS", "OOM: FreshRSS HTTP session (free=%u maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    return;
+  }
+  configureFreshRssHttpClient(*g_freshRssClient);
+  LOG_INF("FRSS", "HTTP session started (free=%u maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+#endif
+}
+
+void HttpDownloader::endFreshRssSession() {
+#if defined(FREEINK_NET_WOLFSSL)
+  if (g_freshRssClient) {
+    g_freshRssClient->end();
+    g_freshRssClient.reset();
+    LOG_INF("FRSS", "HTTP session ended (free=%u maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  }
+#endif
+}
 
 bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const std::string& username,
                               const std::string& password) {

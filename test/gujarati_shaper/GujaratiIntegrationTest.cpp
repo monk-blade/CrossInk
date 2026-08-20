@@ -27,10 +27,12 @@ TEST(GujaratiIntegration, ContainsGujaratiDetectsBlockAndPua) {
   EXPECT_TRUE(GujaratiIntegration::containsGujarati(guj));
 }
 
-TEST(GujaratiIntegration, ShapeWordIsNoOpForNonGujaratiText) {
-  std::string ascii = "hello world";
-  GujaratiIntegration::shapeWord(ascii);
-  EXPECT_EQ(ascii, "hello world");
+TEST(GujaratiIntegration, ShapeWordLeavesMixedLatinUnchanged) {
+  std::string mixed = "OK";
+  appendCp(mixed, 0x0A95);
+  appendCp(mixed, 0x0ACD);
+  GujaratiIntegration::shapeWord(mixed);
+  EXPECT_EQ(mixed.compare(0, 2, "OK"), 0);
 }
 
 TEST(GujaratiIntegration, ShapeWordShapesAGujaratiWord) {

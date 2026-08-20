@@ -417,7 +417,24 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
     return false;
   }
 
-  if (!validateImageDimensions(srcWidth, srcHeight, "JPEG", MAX_JPEG_SOURCE_WIDTH)) {
+  // JPEGDEC streams scaled MCU blocks into the laid-out box. Skip the source
+  // pixel cap when the reader already chose an on-screen destination; still
+  // reject absurd sizes that would loop the scaler forever.
+  constexpr int kMaxJpegStreamWidth = 8192;
+  constexpr int kMaxJpegStreamHeight = 8192;
+  if (config.useExactDimensions && config.maxWidth > 0 && config.maxHeight > 0) {
+    if (srcWidth > kMaxJpegStreamWidth || srcHeight > kMaxJpegStreamHeight) {
+      LOG_ERR("JPG", "JPEG source too large to stream-decode (%dx%d), max %dx%d: %s", srcWidth, srcHeight,
+              kMaxJpegStreamWidth, kMaxJpegStreamHeight, imagePath.c_str());
+      jpeg->close();
+      delete jpeg;
+      return false;
+    }
+    if (srcWidth > MAX_JPEG_SOURCE_WIDTH || srcHeight > MAX_SOURCE_HEIGHT) {
+      LOG_INF("JPG", "Large JPEG %dx%d; stream-decoding into %dx%d box", srcWidth, srcHeight, config.maxWidth,
+              config.maxHeight);
+    }
+  } else if (!validateImageDimensions(srcWidth, srcHeight, "JPEG", MAX_JPEG_SOURCE_WIDTH)) {
     jpeg->close();
     delete jpeg;
     return false;

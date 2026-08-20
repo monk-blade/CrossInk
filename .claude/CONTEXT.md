@@ -20,11 +20,13 @@ Refer to https://freeink.org/llms.txt for guidance.
 ## Real Hardware / Storage
 
 - SdFat on hardware allows only one open reader per file path at a time. If a fallback needs to reopen the same file, close the first handle before reopening.
-- Before wolfSSL work on ESP32-C3, release active SD fonts with `sdFontSystem.releaseForNetwork(renderer)` and reload only after the TLS clients are destroyed; UI fallback sizes and glyph caches can otherwise starve TLS record allocations.
+- Before wolfSSL work on ESP32-C3, release active SD fonts with `sdFontSystem.releaseForNetwork(renderer)` and reload only after the TLS clients are destroyed; UI fallback sizes and glyph caches can otherwise starve TLS record allocations. `releaseForNetwork()` also clears built-in `FontCacheManager` / decompressor page slots.
+- FreshRSS HTTPS retries up to three times and calls `SecureHttpClient::end()` after every API response so wolfSSL frees its CTX/SSL before the next handshake in the same sync burst.
 
 ## Rendering / Reader Pipeline
 
 - `lib/Epub/Epub/Page.cpp`: images must render only in `GfxRenderer::BW`; grayscale passes are text anti-aliasing passes only.
+- Image decode OOM on C3 must not be remembered as a session failure; a later visit with more free heap should retry.
 - Kindle EPUBs may contain paired high-res and old-Kindle fallback images. `ChapterHtmlSlimParser` should skip `<img>` nodes with `data-AmznRemoved-M8` to avoid duplicate stacked images.
 - After image/layout pipeline changes that affect cached EPUB output, clear the affected `.crosspoint/epub_<hash>/` cache if behavior looks stale.
 

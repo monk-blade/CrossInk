@@ -658,6 +658,28 @@ def load_canonical_pua_mapping():
         return json.load(mapping_file)
 
 
+def parse_size_map(spec: str) -> dict[int, int]:
+    """Parse ``OUTPUT:RASTER,OUTPUT:RASTER`` fallback size overrides."""
+    mapping: dict[int, int] = {}
+    for entry in spec.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if ":" not in entry:
+            raise ValueError(
+                f"invalid size map entry '{entry}'; expected OUTPUT:RASTER like 16:18"
+            )
+        output_s, raster_s = entry.split(":", 1)
+        output_size = int(output_s.strip())
+        raster_size = int(raster_s.strip())
+        if output_size <= 0 or raster_size <= 0:
+            raise ValueError(
+                f"invalid size map entry '{entry}'; sizes must be positive integers"
+            )
+        mapping[output_size] = raster_size
+    return mapping
+
+
 def merge_intervals(intervals):
     """Return sorted, non-overlapping inclusive intervals."""
     merged = []
@@ -673,7 +695,8 @@ def merge_intervals(intervals):
 
 def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=False,
                          fallback_fontfiles=None, fallback_include_intervals=None,
-                         fallback_fontfile=None, darken_aa=False, pua_mapping=None):
+                         fallback_fontfile=None, fallback_raster_size=None,
+                         darken_aa=False, pua_mapping=None):
     """Rasterize all glyphs for one font style. Returns StyleRasterData."""
     import freetype
 
@@ -707,9 +730,16 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=F
     fallback_faces = []
     fallback_pua_glyph_indices = []
     canonical_pua_mapping = load_canonical_pua_mapping() if pua_mapping else None
+    fb_raster_size = fallback_raster_size if fallback_raster_size is not None else size
+    if fb_raster_size != size:
+        print(
+            f"  [{style_label}] Fallback raster size: {fb_raster_size}pt "
+            f"(primary {size}pt)",
+            file=sys.stderr,
+        )
     for fallback_path in fallback_fontfiles:
         fallback_face = freetype.Face(fallback_path)
-        fallback_face.set_char_size(size << 6, size << 6, 150, 150)
+        fallback_face.set_char_size(fb_raster_size << 6, fb_raster_size << 6, 150, 150)
         fallback_faces.append(fallback_face)
         fallback_mappings = []
         if canonical_pua_mapping:
@@ -1007,8 +1037,8 @@ def style_sections_total_size(sections):
 
 def generate_cpfont_multistyle(style_fonts, size, intervals, output_path,
                                force_autohint=False, fallback_style_fonts=None,
-                               fallback_style_intervals=None, darken_aa=False,
-                               pua_mapping=None):
+                               fallback_style_intervals=None, fallback_raster_size=None,
+                               darken_aa=False, pua_mapping=None):
     """Generate a multi-style v4 .cpfont file.
 
     style_fonts: dict of {style_id: fontfile_path} e.g. {0: "Regular.ttf", 2: "Italic.ttf"}
@@ -1036,6 +1066,7 @@ def generate_cpfont_multistyle(style_fonts, size, intervals, output_path,
             force_autohint=force_autohint,
             fallback_fontfiles=fallback_fontfiles,
             fallback_include_intervals=fallback_include_intervals,
+            fallback_raster_size=fallback_raster_size,
             darken_aa=darken_aa,
             pua_mapping=pua_mapping)
 
@@ -1168,6 +1199,10 @@ def main():
                         help="Allowed ranges for each italic fallback, as 0xSTART-0xEND;... .")
     parser.add_argument("--fallback-bolditalic-ranges", dest="fallback_bolditalic_ranges", action="append",
                         help="Allowed ranges for each bold-italic fallback, as 0xSTART-0xEND;... .")
+    parser.add_argument("--fallback-sizes", dest="fallback_sizes",
+                        help="Per-output fallback raster sizes as OUTPUT:RASTER pairs "
+                             "(e.g. '16:18,18:20' rasterizes fallback glyphs larger "
+                             "for the 16pt and 18pt .cpfont files).")
 
     args = parser.parse_args()
 
@@ -1240,6 +1275,13 @@ def main():
         print("Error: --size or --sizes is required", file=sys.stderr)
         sys.exit(1)
 
+    fallback_size_map: dict[int, int] = {}
+    if args.fallback_sizes:
+        try:
+            fallback_size_map = parse_size_map(args.fallback_sizes)
+        except ValueError as error:
+            parser.error(str(error))
+
     # Validate early: single-style mode requires a font file
     if not is_multistyle and not fontfile:
         print("Error: fontfile is required in single-style mode", file=sys.stderr)
@@ -1284,12 +1326,21 @@ def main():
         else:
             filename = f"{font_name}_{sz}.cpfont"
             output_path = os.path.join(output_dir, filename)
-        print(f"Generating {output_path} (size {sz}, {len(style_fonts)} style(s), v4)...", file=sys.stderr)
+        fallback_raster_size = fallback_size_map.get(sz)
+        if fallback_raster_size is not None and fallback_raster_size != sz:
+            print(
+                f"Generating {output_path} (size {sz}, fallback raster {fallback_raster_size}, "
+                f"{len(style_fonts)} style(s), v4)...",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Generating {output_path} (size {sz}, {len(style_fonts)} style(s), v4)...", file=sys.stderr)
         total_size += generate_cpfont_multistyle(
             style_fonts, sz, intervals, output_path,
             force_autohint=args.force_autohint,
             fallback_style_fonts=fallback_style_fonts,
             fallback_style_intervals=fallback_style_intervals,
+            fallback_raster_size=fallback_raster_size,
             darken_aa=args.darken_aa,
             pua_mapping=pua_mapping)
     print(f"\nTotal: {len(sizes)} files, {total_size / 1024 / 1024:.2f} MB", file=sys.stderr)

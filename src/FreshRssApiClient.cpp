@@ -3,11 +3,13 @@
 #include "network/HttpDownloader.h"
 #if defined(ARDUINO)
 #include <Arduino.h>
+#include <MemoryBudget.h>
 #endif
 #include <StreamingJsonParser.h>
 #include <Logging.h>
 
 #include <algorithm>
+#include <vector>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -392,24 +394,30 @@ std::string FreshRssApiClient::endpoint(const std::string& path) const {
 
 bool FreshRssApiClient::login(std::string& auth, std::string& error, const CancelCallback& shouldCancel) {
   std::string response;
-  const std::string form = "Email=" + formEncode(account.username) + "&Passwd=" + formEncode(account.password);
-  LOG_DBG("FRSS", "POST accounts/ClientLogin");
+  const std::string form = "Email=" + formEncode(account.username) + "&Passwd=" + formEncode(account.password) +
+                           "&service=reader&client=CrossInk";
+  LOG_DBG("FRSS", "POST accounts/ClientLogin to %s", account.apiUrl.c_str());
   if (!HttpDownloader::postForm(endpoint("accounts/ClientLogin"), form,
                                  [&response](const uint8_t* data, size_t len) {
                                    if (response.size() + len > 2048) return false;
                                    response.append(reinterpret_cast<const char*>(data), len);
                                    return true;
                                  },
-                                 {}, shouldCancel)) {
-    error = "ClientLogin failed";
+                                 {{"Accept-Encoding", "identity"}, {"Cache-Control", "no-cache"}}, shouldCancel)) {
+    error = "FreshRSS login failed (network)";
+#if defined(ARDUINO)
+    LOG_ERR("FRSS", "login: ClientLogin request failed (free=%u maxAlloc=%u)", ESP.getFreeHeap(),
+            ESP.getMaxAllocHeap());
+#else
     LOG_ERR("FRSS", "login: ClientLogin request failed");
+#endif
     return false;
   }
   const std::string marker = "Auth=";
   const size_t start = response.find(marker);
   if (start == std::string::npos) {
     error = "FreshRSS returned no Auth token";
-    LOG_ERR("FRSS", "login: ClientLogin response had no Auth= token (likely bad credentials)");
+    LOG_ERR("FRSS", "login: ClientLogin response had no Auth= token (len=%zu, likely bad credentials)", response.size());
     return false;
   }
   const size_t valueStart = start + marker.size();
@@ -428,7 +436,9 @@ bool FreshRssApiClient::getJson(const std::string& path, const FreshRssJsonParse
                                 bool* requestCompleted, const CancelCallback& shouldCancel) {
   LOG_DBG("FRSS", "GET %s", path.c_str());
   const std::vector<HttpDownloader::Header> headers = {{"Authorization", "GoogleLogin auth=" + auth},
-                                                        {"Accept", "application/json"}};
+                                                        {"Accept", "application/json"},
+                                                        {"Accept-Encoding", "identity"},
+                                                        {"Cache-Control", "no-cache"}};
   const bool fetched = HttpDownloader::fetchUrlWithHeaders(
       endpoint(path), [&parser](const uint8_t* data, size_t len) {
         parser.feed(data, len);
@@ -439,9 +449,14 @@ bool FreshRssApiClient::getJson(const std::string& path, const FreshRssJsonParse
       }, headers, shouldCancel);
   if (requestCompleted) *requestCompleted = fetched;
   if (!fetched || !parser.finish()) {
-    error = fetched ? "FreshRSS response could not be parsed" : "FreshRSS request failed";
-    LOG_ERR("FRSS", "GET %s failed: transport=%d parser=%d sink=%d: %s", path.c_str(), fetched,
-            parser.ok(), parser.sinkFailed(), error.c_str());
+    error = fetched ? "FreshRSS response could not be parsed" : "FreshRSS request failed (network)";
+#if defined(ARDUINO)
+    LOG_ERR("FRSS", "GET %s failed: transport=%d parser=%d sink=%d free=%u maxAlloc=%u: %s", path.c_str(), fetched,
+            parser.ok(), parser.sinkFailed(), ESP.getFreeHeap(), ESP.getMaxAllocHeap(), error.c_str());
+#else
+    LOG_ERR("FRSS", "GET %s failed: transport=%d parser=%d sink=%d: %s", path.c_str(), fetched, parser.ok(),
+            parser.sinkFailed(), error.c_str());
+#endif
     return false;
   }
   LOG_DBG("FRSS", "GET %s parsed successfully", path.c_str());
@@ -465,17 +480,44 @@ bool FreshRssApiClient::fetchMetadata(FreshRssMetadata& metadata, std::string& a
     error = "FreshRSS account is not configured";
     return false;
   }
+  metadata = {};
   if (!login(auth, error, shouldCancel)) return false;
-  FreshRssJsonParser subscriptions(FreshRssJsonParser::Document::Subscriptions);
-  if (!getJson("reader/api/0/subscription/list?output=json", FreshRssJsonParser::Document::Subscriptions, subscriptions,
-               auth, error, nullptr, shouldCancel))
-    return false;
-  FreshRssJsonParser tags(FreshRssJsonParser::Document::Tags);
-  if (!getJson("reader/api/0/tag/list?output=json", FreshRssJsonParser::Document::Tags, tags, auth, error, nullptr,
-               shouldCancel))
-    return false;
-  metadata = subscriptions.metadata();
-  metadata.tags = tags.metadata().tags;
+
+#if defined(ARDUINO)
+  // Let wolfSSL free its CTX/SSL and give the heap a moment to coalesce before
+  // the next TLS handshake on ESP32-C3.
+  delay(100);
+#endif
+
+  // Fetch tags before subscriptions: the tag response is usually smaller, and
+  // holding a parsed subscription list in RAM while opening another TLS socket
+  // was leaving too little contiguous heap for the tag request on X3.
+  {
+    FreshRssJsonParser tags(FreshRssJsonParser::Document::Tags);
+    std::string tagError;
+    const bool tagsFetched =
+        getJson("reader/api/0/tag/list?output=json", FreshRssJsonParser::Document::Tags, tags, auth, tagError, nullptr,
+                shouldCancel);
+    if (tagsFetched) {
+      metadata.tags = tags.metadata().tags;
+    } else {
+      LOG_ERR("FRSS", "tag list unavailable (%s); continuing without category labels", tagError.c_str());
+    }
+  }
+
+#if defined(ARDUINO)
+  delay(100);
+#endif
+
+  {
+    FreshRssJsonParser subscriptions(FreshRssJsonParser::Document::Subscriptions);
+    if (!getJson("reader/api/0/subscription/list?output=json", FreshRssJsonParser::Document::Subscriptions,
+                 subscriptions, auth, error, nullptr, shouldCancel)) {
+      if (error == "FreshRSS request failed (network)") error = "FreshRSS subscription list failed (network)";
+      return false;
+    }
+    metadata.subscriptions = subscriptions.metadata().subscriptions;
+  }
   return true;
 }
 
@@ -493,12 +535,18 @@ bool FreshRssApiClient::fetchArticles(const std::string& auth, const size_t arti
   if (progress) progress(0, boundedLimit);
   std::string continuation;
   // FreshRSS installations can spend a long time building a large reading
-  // list response.  The configured server reliably returns n=25 quickly,
-  // while n=100 can exceed the device HTTP timeout before the first article
-  // reaches the streaming parser.  Smaller pages also keep the response and
-  // parser working set bounded; total transfer size is unchanged.
-  const size_t requestPageSize = 25;
+  // list response. Smaller pages keep the response and parser working set
+  // bounded; total transfer size is unchanged.
+  size_t requestPageSize = 25;
+#if defined(ARDUINO)
+  // One article page at a time on device: heavy HtmlRichText work must not run
+  // inside the TLS read callback or the server times out mid-response.
+  requestPageSize = 5;
+#endif
   do {
+#if defined(ARDUINO)
+    if (!continuation.empty()) delay(200);
+#endif
     const size_t remaining = boundedLimit - received;
     std::string path = "reader/api/0/stream/contents/reading-list?output=json&n=" +
                        std::to_string(std::min(remaining, requestPageSize));
@@ -508,28 +556,30 @@ bool FreshRssApiClient::fetchArticles(const std::string& auth, const size_t arti
       path += "&ot=" + std::to_string(cursor->modifiedMsec / 1000ULL);
     }
     if (!continuation.empty()) path += "&c=" + formEncode(continuation);
-    FreshRssJsonParser articles(FreshRssJsonParser::Document::Articles,
-                                [&sink, &received, boundedLimit, &progress](FreshRssArticle&& item) {
-      // A server may ignore n= and return a larger page. Stop admitting
-      // records at the device limit while still draining/parsing that HTTP
-      // response cleanly so it is not mistaken for a sink/SD failure.
-      if (received >= boundedLimit) return true;
-      if (!sink(std::move(item))) return false;
-      ++received;
-      if (progress) progress(received, boundedLimit);
-      return true;
-    });
+    std::vector<FreshRssArticle> page;
+    page.reserve(requestPageSize);
+    FreshRssJsonParser articles(
+        FreshRssJsonParser::Document::Articles,
+        [&page, boundedLimit, &received](FreshRssArticle&& item) {
+          if (received + page.size() >= boundedLimit) return true;
+          page.push_back(std::move(item));
+          return true;
+        });
     bool requestCompleted = false;
     if (!getJson(path, FreshRssJsonParser::Document::Articles, articles, auth, error, &requestCompleted,
                 shouldCancel)) {
+      if (error == "FreshRSS request failed (network)") error = "FreshRSS articles failed (network)";
       // Only treat this as "the server ignored ot=" when the HTTP request
       // itself completed but the response then failed to parse or validate.
-      // A transport-level failure (DNS, timeout, TLS, connection reset) says
-      // nothing about delta support, and must not trigger a full re-download
-      // stacked on top of a connection that just dropped.
       if (deltaUnsupported && cursor && cursor->valid && requestCompleted && !articles.sinkFailed())
         *deltaUnsupported = true;
       return false;
+    }
+    for (auto& item : page) {
+      if (received >= boundedLimit) break;
+      if (!sink(std::move(item))) return false;
+      ++received;
+      if (progress) progress(received, boundedLimit);
     }
     continuation = articles.continuation();
   } while (received < boundedLimit && !continuation.empty());
