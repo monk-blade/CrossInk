@@ -250,7 +250,8 @@ HttpDownloader::DownloadError runRequestWolfOnce(const std::string& url, const c
 
 HttpDownloader::DownloadError runRequestWolf(const std::string& url, const char* method,
                                              const std::string& payload, const std::vector<Header>& headers,
-                                             Sink& sink) {
+                                             Sink& sink, const bool keepConnection) {
+  const bool isPost = std::strcmp(method, "POST") == 0;
   for (int attempt = 0; attempt < FRESHRSS_HTTP_ATTEMPTS; ++attempt) {
     if (attempt > 0) {
       LOG_INF("FRSS", "HTTP retry %d/%d for %s %s (free=%u maxAlloc=%u)", attempt + 1, FRESHRSS_HTTP_ATTEMPTS, method,
@@ -282,9 +283,10 @@ HttpDownloader::DownloadError runRequestWolf(const std::string& url, const char*
     }
 
     const HttpDownloader::DownloadError result = runRequestWolfOnce(url, method, payload, headers, sink, http);
-    // Drop the wolfSSL CTX/SSL before the next API call in the same sync burst.
-    // Reusing the SecureHttpClient object avoids reallocating the client itself.
-    releaseFreshRssTransport(http);
+    // POST responses are tiny; close TLS so metadata GETs start with a clean
+    // heap. Article pagination reuses one TLS session (keepConnection) so each
+    // page does not pay for another wolfSSL handshake on ESP32-C3.
+    if (isPost || result != HttpDownloader::OK || !keepConnection) releaseFreshRssTransport(http);
     if (result == HttpDownloader::OK || result == HttpDownloader::ABORTED) return result;
   }
   return HttpDownloader::HTTP_ERROR;
@@ -366,10 +368,11 @@ HttpDownloader::DownloadError runRequestDefault(const std::string& url, const ch
 
 HttpDownloader::DownloadError runFreshRssRequest(const std::string& url, const char* method,
                                                  const std::string& payload, const std::vector<Header>& headers,
-                                                 Sink& sink) {
+                                                 Sink& sink, const bool keepConnection) {
 #if defined(FREEINK_NET_WOLFSSL)
-  return runRequestWolf(url, method, payload, headers, sink);
+  return runRequestWolf(url, method, payload, headers, sink, keepConnection);
 #else
+  (void)keepConnection;
   return runRequestDefault(url, method, payload, headers, sink);
 #endif
 }
@@ -757,6 +760,51 @@ void HttpDownloader::endFreshRssSession() {
 #endif
 }
 
+void HttpDownloader::releaseFreshRssConnection() {
+#if defined(FREEINK_NET_WOLFSSL)
+  releaseFreshRssTransport(g_freshRssClient.get());
+#endif
+}
+
+HttpDownloader::DownloadError HttpDownloader::downloadToFileWithHeaders(
+    const std::string& url, const std::string& destPath, const std::vector<Header>& headers,
+    ProgressCallback progress, CancelCallback shouldCancel, const bool keepConnection) {
+  WifiPowerSaveGuard wifiPowerSaveGuard;
+  (void)wifiPowerSaveGuard;
+
+  FsFile file;
+  bool fileOpen = false;
+  Sink sink;
+  sink.progress = std::move(progress);
+  sink.shouldCancel = std::move(shouldCancel);
+  sink.write = [&](const uint8_t* data, const size_t len) {
+    if (!fileOpen) {
+      fileOpen = Storage.openFileForWrite("FRSS", destPath.c_str(), file);
+      if (!fileOpen) {
+        LOG_ERR("FRSS", "Failed to open %s for article page spool", destPath.c_str());
+        return false;
+      }
+    }
+    return file.write(data, len) == len;
+  };
+
+  const DownloadError result = runFreshRssRequest(url, "GET", "", headers, sink, keepConnection);
+  if (fileOpen) {
+    file.flush();
+    file.close();
+  }
+  if (result != OK) {
+    Storage.remove(destPath.c_str());
+    return result;
+  }
+  if (!fileOpen) {
+    LOG_ERR("FRSS", "Article page download wrote no data to %s", destPath.c_str());
+    Storage.remove(destPath.c_str());
+    return HTTP_ERROR;
+  }
+  return OK;
+}
+
 bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const std::string& username,
                               const std::string& password) {
   return fetchUrl(
@@ -782,7 +830,8 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
 }
 
 bool HttpDownloader::fetchUrlWithHeaders(const std::string& url, const DataCallback& onData,
-                                         const std::vector<Header>& headers, CancelCallback shouldCancel) {
+                                         const std::vector<Header>& headers, CancelCallback shouldCancel,
+                                         const bool keepConnection) {
   if (!onData) return false;
   // Unlike streamUrl/downloadToFile, this path had no WifiPowerSaveGuard —
   // every FreshRSS request ran with Wi-Fi power save on, which is slower and
@@ -792,7 +841,7 @@ bool HttpDownloader::fetchUrlWithHeaders(const std::string& url, const DataCallb
   Sink sink;
   sink.write = onData;
   sink.shouldCancel = std::move(shouldCancel);
-  return runFreshRssRequest(url, "GET", "", headers, sink) == OK;
+  return runFreshRssRequest(url, "GET", "", headers, sink, keepConnection) == OK;
 }
 
 bool HttpDownloader::postForm(const std::string& url, const std::string& formBody, const DataCallback& onData,
@@ -805,7 +854,7 @@ bool HttpDownloader::postForm(const std::string& url, const std::string& formBod
   sink.shouldCancel = std::move(shouldCancel);
   std::vector<Header> requestHeaders = headers;
   requestHeaders.emplace_back("Content-Type", "application/x-www-form-urlencoded");
-  return runFreshRssRequest(url, "POST", formBody, requestHeaders, sink) == OK;
+  return runFreshRssRequest(url, "POST", formBody, requestHeaders, sink, false) == OK;
 }
 
 HttpDownloader::DownloadError HttpDownloader::streamUrl(const std::string& url, const DataCallback& onData,

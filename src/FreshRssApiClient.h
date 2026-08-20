@@ -123,7 +123,7 @@ class FreshRssApiClient {
   // apart from a response that came back but failed to parse or validate.
   bool getJson(const std::string& path, FreshRssJsonParser::Document document, FreshRssJsonParser& parser,
               const std::string& auth, std::string& error, bool* requestCompleted = nullptr,
-              const CancelCallback& shouldCancel = nullptr);
+              const CancelCallback& shouldCancel = nullptr, bool keepConnection = false);
   std::string endpoint(const std::string& path) const;
 
   FreshRssAccount account;

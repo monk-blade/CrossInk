@@ -271,10 +271,8 @@ void RssFeedListActivity::performSync() {
   const uint32_t maxAllocBeforeFontRelease = ESP.getMaxAllocHeap();
   {
     RenderLock lock(*this);
-    // The Gujarati/list SD family includes multiple UI fallback sizes and
-    // glyph caches. They are not needed by the HTTP parser and can leave too
-    // little contiguous internal RAM for the larger response records that
-    // follow FreshRSS's tiny ClientLogin response on C3 devices.
+    // releaseForNetwork() unloads SD glyphs, the font catalog registry, and
+    // built-in decompressor caches — the same prep Manage Fonts uses before TLS.
     sdFontSystem.releaseForNetwork(renderer);
   }
   HttpDownloader::beginFreshRssSession();

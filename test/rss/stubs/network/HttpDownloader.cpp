@@ -12,7 +12,8 @@ bool HttpDownloader::postForm(const std::string& url, const std::string& body, c
 }
 
 bool HttpDownloader::fetchUrlWithHeaders(const std::string& url, const DataCallback& callback,
-                                         const std::vector<Header>& headers, CancelCallback /*shouldCancel*/) {
+                                         const std::vector<Header>& headers, CancelCallback /*shouldCancel*/,
+                                         bool /*keepConnection*/) {
   const Request request{"GET", url, {}, headers};
   requests.push_back(request);
   return getHandler && getHandler(request, callback);

@@ -6,6 +6,7 @@
 #include <Logging.h>
 #if defined(ARDUINO)
 #include <MemoryBudget.h>
+#include <Arduino.h>
 #endif
 
 #include <algorithm>
@@ -63,6 +64,16 @@ bool runFreshRssSync(FreshRssSyncHost& host, std::string& error) {
                              bool& deltaInconsistent) {
     FreshRssCache::WriteSession writer;
     if (!writer.begin(metadata, SETTINGS.freshRssArticleLimit, nextCursor)) return false;
+#if defined(ARDUINO)
+    // Writer keeps its own metadata copy for subscription/category indexing.
+    // Drop the duplicate in the sync runner before article HTTPS pages.
+    metadata.subscriptions.clear();
+    metadata.subscriptions.shrink_to_fit();
+    metadata.tags.clear();
+    metadata.tags.shrink_to_fit();
+    delay(100);
+    LOG_INF("FRSS", "snapshot opened for articles (free=%u maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+#endif
     std::vector<uint32_t> changedKeys;
     changedKeys.reserve(SETTINGS.freshRssArticleLimit);
     const FreshRssSyncCursor* cursor = delta ? &previousCursor : nullptr;

@@ -322,9 +322,8 @@ void RssItemListActivity::fetchFeed() {
   const uint32_t maxAllocBeforeFontRelease = ESP.getMaxAllocHeap();
   {
     RenderLock lock(*this);
-    // Return the active SD list font, its UI fallback sizes, and glyph caches
-    // before wolfSSL allocates its record buffers. The font selection remains
-    // in SETTINGS and is restored after the network clients are destroyed.
+    // releaseForNetwork() unloads SD glyphs, the font catalog registry, and
+    // built-in decompressor caches before wolfSSL allocates record buffers.
     sdFontSystem.releaseForNetwork(renderer);
   }
   HttpDownloader::beginFreshRssSession();

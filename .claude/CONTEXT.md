@@ -20,8 +20,9 @@ Refer to https://freeink.org/llms.txt for guidance.
 ## Real Hardware / Storage
 
 - SdFat on hardware allows only one open reader per file path at a time. If a fallback needs to reopen the same file, close the first handle before reopening.
-- Before wolfSSL work on ESP32-C3, release active SD fonts with `sdFontSystem.releaseForNetwork(renderer)` and reload only after the TLS clients are destroyed; UI fallback sizes and glyph caches can otherwise starve TLS record allocations. `releaseForNetwork()` also clears built-in `FontCacheManager` / decompressor page slots.
-- FreshRSS HTTPS retries up to three times and calls `SecureHttpClient::end()` after every API response so wolfSSL frees its CTX/SSL before the next handshake in the same sync burst.
+- Before wolfSSL work on ESP32-C3, release active SD fonts with `sdFontSystem.releaseForNetwork(renderer)` and reload only after the TLS clients are destroyed. That call unloads glyph caches, the SD font catalog registry, and built-in `FontCacheManager` / decompressor page slots.
+- FreshRSS article pages on device are spooled to `/.crosspoint/freshrss/page.tmp` (font-manifest pattern): wolfSSL download → `releaseFreshRssConnection()` → parse from SD in 512-byte chunks → `HtmlRichText` → snapshot append.
+- FreshRSS HTTPS retries up to three times. POST/login and metadata GETs close the wolfSSL session after each response; article page downloads may reuse TLS during the burst but always close before parsing the spooled file.
 
 ## Rendering / Reader Pipeline
 

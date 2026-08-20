@@ -277,13 +277,21 @@ need to reshape it.
 
 Sized for the ESP32-C3's ~380KB RAM with no PSRAM:
 
-- A FreshRSS refresh admits at most the selected 200/500/1000 items. Each HTTP
-  request asks for a fixed 25-item page (`FreshRssApiClient::fetchArticles`'s
-  `requestPageSize`) — smaller than the configured server default because the
-  device's HTTP timeout can be exceeded by the time a 100-item response
-  begins streaming. The sink retains only the current bounded item; completed
-  metadata and shaped body records are written to `snapshot.bin.tmp`
-  immediately.
+- A FreshRSS refresh admits at most the selected 200/500/1000 items. On device,
+  each HTTP request asks for **one** article (`requestPageSize = 1`) because
+  holding multiple 32 KB HTML bodies while TLS is active exhausted RAM on X3.
+  Host tests still use 25-item pages.
+- On device, each article page is **spooled to SD** at
+  `/.crosspoint/freshrss/page.tmp` (same pattern as the font manifest in
+  [`FontDownloadActivity.cpp`](../src/activities/settings/FontDownloadActivity.cpp)):
+  download with wolfSSL → close the TLS session → parse JSON from the temp file
+  in small chunks → run `HtmlRichText` and append to `snapshot.bin.tmp` → delete
+  the temp file. TLS buffers and the JSON parser never share peak RAM.
+- Before article downloads, `runFreshRssSync` drops the duplicate subscription
+  metadata copy held by the sync runner (the `WriteSession` keeps its own copy).
+- `sdFontSystem.releaseForNetwork()` before sync mirrors Manage Fonts: it unloads
+  SD glyph caches, the font catalog registry, and built-in decompressor page
+  slots so wolfSSL can allocate a contiguous handshake block.
 - Each body is capped at 32 KB. Oversized bodies are marked truncated and the
   available prefix is still cached. The reader stores word pointers in its line
   index rather than copying every word string, so pagination does not double
@@ -296,6 +304,22 @@ Sized for the ESP32-C3's ~380KB RAM with no PSRAM:
   ceiling. The activity holds only the current visible metadata page and one
   selected body; new snapshots retain all admitted records and do not use LRU
   body eviction.
+
+### Network memory phases (font-download pattern)
+
+Manage Fonts and FreshRSS share the same low-RAM discipline on ESP32-C3:
+
+| Phase | Manage Fonts | FreshRSS sync |
+| --- | --- | --- |
+| Pre-network | `releaseForNetwork()` (glyphs + registry + decompressor) | Same in `RssFeedListActivity` / `RssItemListActivity` |
+| Metadata fetch | Manifest → SD tmp → close HTTP → parse file | Login/tags/subs via streaming JSON (small responses) |
+| Bulk payload | Each `.cpfont` → SD tmp → CRC → rename | Each article page → SD tmp → close TLS → parse → cache |
+| Post-network | `ensureLoaded()` + `releaseRegistry()` on exit | `ensureLoaded()` after `endFreshRssSession()` |
+
+FreshRSS cannot use plain HTTP like the S3 font bucket (HTTPS is required), so
+article pages use the wolfSSL `HttpDownloader` session with retries and optional
+TLS keep-alive during the download burst; TLS is always released before parsing
+the spooled page.
 
 ## Porting / upstream note
 

@@ -70,7 +70,8 @@ class HttpDownloader {
   // lambda that re-polls raw input state to let a long-running request be
   // interrupted from the same call stack that started it.
   static bool fetchUrlWithHeaders(const std::string& url, const DataCallback& onData,
-                                  const std::vector<Header>& headers, CancelCallback shouldCancel = nullptr);
+                                  const std::vector<Header>& headers, CancelCallback shouldCancel = nullptr,
+                                  bool keepConnection = false);
   static bool postForm(const std::string& url, const std::string& formBody, const DataCallback& onData,
                        const std::vector<Header>& headers = {}, CancelCallback shouldCancel = nullptr);
 
@@ -79,10 +80,20 @@ class HttpDownloader {
   // the last request and before SD fonts are reloaded.
   static void beginFreshRssSession();
   static void endFreshRssSession();
+  // Close the kept-alive wolfSSL socket without destroying the session client.
+  // Call after spooling a response to SD and before parsing it from the file.
+  static void releaseFreshRssConnection();
 
   /**
-   * Stream a URL with cancellation/progress support and a detailed result.
+   * Download a URL with custom headers. On ESP32 firmware with wolfSSL, uses the
+   * FreshRSS TLS session (retries, heap gates). Caller must remove destPath first
+   * if a clean download is required.
    */
+  static DownloadError downloadToFileWithHeaders(const std::string& url, const std::string& destPath,
+                                                 const std::vector<Header>& headers,
+                                                 ProgressCallback progress = nullptr,
+                                                 CancelCallback shouldCancel = nullptr,
+                                                 bool keepConnection = false);
   static DownloadError streamUrl(const std::string& url, const DataCallback& onData,
                                  ProgressCallback progress = nullptr, const std::string& username = "",
                                  const std::string& password = "", DownloadOptions options = DownloadOptions());

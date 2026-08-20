@@ -3,6 +3,7 @@
 #include "network/HttpDownloader.h"
 #if defined(ARDUINO)
 #include <Arduino.h>
+#include <HalStorage.h>
 #include <MemoryBudget.h>
 #endif
 #include <StreamingJsonParser.h>
@@ -109,6 +110,39 @@ std::string normalizeApiUrl(std::string url) {
   if (url.size() >= 4 && url.compare(url.size() - 4, 4, "/api") == 0) return url + "/greader.php";
   return url + "/api/greader.php";
 }
+
+#if defined(ARDUINO)
+constexpr char ARTICLE_PAGE_TMP[] = "/.crosspoint/freshrss/page.tmp";
+constexpr char ARTICLE_PAGE_DIR[] = "/.crosspoint/freshrss";
+constexpr size_t ARTICLE_PAGE_READ_CHUNK = 512;
+
+std::vector<HttpDownloader::Header> freshRssAuthHeaders(const std::string& auth) {
+  return {{"Authorization", "GoogleLogin auth=" + auth},
+          {"Accept", "application/json"},
+          {"Accept-Encoding", "identity"},
+          {"Cache-Control", "no-cache"}};
+}
+
+std::string articlesErrorAtItem(const char* reason, const size_t itemIndex) {
+  return std::string("FreshRSS articles failed (") + reason + ") at item " + std::to_string(itemIndex + 1);
+}
+
+bool parseArticlesPageFromFile(FreshRssJsonParser& parser) {
+  FsFile pageFile;
+  if (!Storage.openFileForRead("FRSS", ARTICLE_PAGE_TMP, pageFile)) {
+    LOG_ERR("FRSS", "Failed to open spooled article page %s", ARTICLE_PAGE_TMP);
+    return false;
+  }
+  uint8_t buffer[ARTICLE_PAGE_READ_CHUNK];
+  while (pageFile.available()) {
+    const int bytesRead = pageFile.read(buffer, sizeof(buffer));
+    if (bytesRead <= 0) break;
+    parser.feed(buffer, static_cast<size_t>(bytesRead));
+  }
+  pageFile.close();
+  return parser.finish();
+}
+#endif
 }  // namespace
 
 struct FreshRssJsonParser::ParserStorage {
@@ -433,7 +467,7 @@ bool FreshRssApiClient::login(std::string& auth, std::string& error, const Cance
 
 bool FreshRssApiClient::getJson(const std::string& path, const FreshRssJsonParser::Document /*document*/,
                                 FreshRssJsonParser& parser, const std::string& auth, std::string& error,
-                                bool* requestCompleted, const CancelCallback& shouldCancel) {
+                                bool* requestCompleted, const CancelCallback& shouldCancel, const bool keepConnection) {
   LOG_DBG("FRSS", "GET %s", path.c_str());
   const std::vector<HttpDownloader::Header> headers = {{"Authorization", "GoogleLogin auth=" + auth},
                                                         {"Accept", "application/json"},
@@ -446,7 +480,7 @@ bool FreshRssApiClient::getJson(const std::string& path, const FreshRssJsonParse
         // so the HTTP client can classify it accurately and discard/reuse the
         // connection safely; parser.feed() becomes a no-op after failure.
         return true;
-      }, headers, shouldCancel);
+      }, headers, shouldCancel, keepConnection);
   if (requestCompleted) *requestCompleted = fetched;
   if (!fetched || !parser.finish()) {
     error = fetched ? "FreshRSS response could not be parsed" : "FreshRSS request failed (network)";
@@ -534,30 +568,61 @@ bool FreshRssApiClient::fetchArticles(const std::string& auth, const size_t arti
   size_t received = 0;
   if (progress) progress(0, boundedLimit);
   std::string continuation;
-  // FreshRSS installations can spend a long time building a large reading
-  // list response. Smaller pages keep the response and parser working set
-  // bounded; total transfer size is unchanged.
   size_t requestPageSize = 25;
 #if defined(ARDUINO)
-  // One article page at a time on device: heavy HtmlRichText work must not run
-  // inside the TLS read callback or the server times out mid-response.
-  requestPageSize = 5;
+  requestPageSize = 1;
+  Storage.mkdir("/.crosspoint");
+  Storage.mkdir(ARTICLE_PAGE_DIR);
 #endif
   do {
 #if defined(ARDUINO)
-    if (!continuation.empty()) delay(200);
+    if (!continuation.empty()) delay(150);
 #endif
     const size_t remaining = boundedLimit - received;
     std::string path = "reader/api/0/stream/contents/reading-list?output=json&n=" +
                        std::to_string(std::min(remaining, requestPageSize));
     if (cursor && cursor->valid && cursor->modifiedMsec != 0) {
-      // FreshRSS follows the Google Reader modified-since convention in
-      // seconds even though the article field is named crawlTimeMsec.
       path += "&ot=" + std::to_string(cursor->modifiedMsec / 1000ULL);
     }
     if (!continuation.empty()) path += "&c=" + formEncode(continuation);
+
     std::vector<FreshRssArticle> page;
     page.reserve(requestPageSize);
+#if defined(ARDUINO)
+    FreshRssJsonParser articles(
+        FreshRssJsonParser::Document::Articles,
+        [&page, boundedLimit, &received, requestPageSize](FreshRssArticle&& item) {
+          if (received + page.size() >= boundedLimit || page.size() >= requestPageSize) return true;
+          page.push_back(std::move(item));
+          return true;
+        });
+    const auto heap = MemoryBudget::snapshot();
+    if (!MemoryBudget::hasHeapForFreshRssTls(heap)) {
+      error = articlesErrorAtItem("low memory", received);
+      LOG_ERR("FRSS", "%s (free=%u maxAlloc=%u)", error.c_str(), heap.freeHeap, heap.maxAllocHeap);
+      return false;
+    }
+    Storage.remove(ARTICLE_PAGE_TMP);
+    const HttpDownloader::DownloadError downloadResult = HttpDownloader::downloadToFileWithHeaders(
+        endpoint(path), ARTICLE_PAGE_TMP, freshRssAuthHeaders(auth), nullptr, shouldCancel, true);
+    HttpDownloader::releaseFreshRssConnection();
+    if (downloadResult == HttpDownloader::ABORTED) return false;
+    if (downloadResult != HttpDownloader::OK) {
+      error = articlesErrorAtItem("network", received);
+      LOG_ERR("FRSS", "%s after spool download (free=%u maxAlloc=%u)", error.c_str(), ESP.getFreeHeap(),
+              ESP.getMaxAllocHeap());
+      return false;
+    }
+    bool requestCompleted = true;
+    if (!parseArticlesPageFromFile(articles) || !articles.ok()) {
+      error = articlesErrorAtItem(articles.sinkFailed() ? "cache write" : "parse", received);
+      Storage.remove(ARTICLE_PAGE_TMP);
+      if (deltaUnsupported && cursor && cursor->valid && requestCompleted && !articles.sinkFailed())
+        *deltaUnsupported = true;
+      return false;
+    }
+    Storage.remove(ARTICLE_PAGE_TMP);
+#else
     FreshRssJsonParser articles(
         FreshRssJsonParser::Document::Articles,
         [&page, boundedLimit, &received](FreshRssArticle&& item) {
@@ -566,21 +631,26 @@ bool FreshRssApiClient::fetchArticles(const std::string& auth, const size_t arti
           return true;
         });
     bool requestCompleted = false;
-    if (!getJson(path, FreshRssJsonParser::Document::Articles, articles, auth, error, &requestCompleted,
-                shouldCancel)) {
-      if (error == "FreshRSS request failed (network)") error = "FreshRSS articles failed (network)";
-      // Only treat this as "the server ignored ot=" when the HTTP request
-      // itself completed but the response then failed to parse or validate.
+    if (!getJson(path, FreshRssJsonParser::Document::Articles, articles, auth, error, &requestCompleted, shouldCancel,
+                true)) {
+      if (error == "FreshRSS request failed (network)") {
+        error = "FreshRSS articles failed (network) at item " + std::to_string(received + 1);
+      }
       if (deltaUnsupported && cursor && cursor->valid && requestCompleted && !articles.sinkFailed())
         *deltaUnsupported = true;
       return false;
     }
+#endif
     for (auto& item : page) {
       if (received >= boundedLimit) break;
       if (!sink(std::move(item))) return false;
       ++received;
       if (progress) progress(received, boundedLimit);
     }
+#if defined(ARDUINO)
+    page.clear();
+    page.shrink_to_fit();
+#endif
     continuation = articles.continuation();
   } while (received < boundedLimit && !continuation.empty());
   return true;
